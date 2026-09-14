@@ -14,9 +14,7 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
 // Replace with your deployed wss:// URL before testing against real Hotstar.
 // For local dev: run `mkcert localhost` and serve with TLS so you get wss://localhost.
-const SIGNALING_SERVER_URL =
-  (typeof __SIGNALING_URL__ !== 'undefined' && __SIGNALING_URL__) ||
-  'wss://YOUR_RENDER_APP.onrender.com';
+const SIGNALING_SERVER_URL = 'wss://together-online-video-call.onrender.com';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
