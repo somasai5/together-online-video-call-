@@ -1,0 +1,23 @@
+{
+  "name": "together-signaling-server",
+  "version": "1.0.0",
+  "description": "WebSocket signaling server for Hotstar Watch Party",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
