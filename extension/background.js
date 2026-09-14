@@ -35,7 +35,7 @@ async function ensureOffscreenDocument() {
 
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_URL,
-    reasons: ['WEBSOCKET'],
+    reasons: ['BLOBS'],
     justification: 'Maintain persistent WebSocket connection to signaling server',
   });
 }

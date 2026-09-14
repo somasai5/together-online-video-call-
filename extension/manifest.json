@@ -29,7 +29,8 @@
     {
       "matches": [
         "*://*.hotstar.com/*",
-        "*://*.disneyplus.hotstar.com/*"
+        "*://*.disneyplus.hotstar.com/*",
+        "*://*.jiohotstar.com/*"
       ],
       "js": ["content_script.js"],
       "run_at": "document_idle",
@@ -47,7 +48,8 @@
 
   "host_permissions": [
     "*://*.hotstar.com/*",
-    "*://*.disneyplus.hotstar.com/*"
+    "*://*.disneyplus.hotstar.com/*",
+    "*://*.jiohotstar.com/*"
   ],
 
   "web_accessible_resources": [
@@ -59,7 +61,8 @@
       ],
       "matches": [
         "*://*.hotstar.com/*",
-        "*://*.disneyplus.hotstar.com/*"
+        "*://*.disneyplus.hotstar.com/*",
+        "*://*.jiohotstar.com/*"
       ]
     }
   ]
