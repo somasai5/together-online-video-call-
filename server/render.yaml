@@ -1,16 +1,16 @@
 # render.yaml — Deploy signaling server to Render.com (free tier)
-# Push this repo to GitHub, then connect it on https://render.com/
-# Render will auto-detect this file and configure the service.
+# Uses Render's native Node.js runtime (no Docker needed).
+# Push this repo to GitHub, then on Render: New → Blueprint Instance → connect this repo.
 
 services:
   - type: web
     name: together-signaling
-    env: node
+    runtime: node
     plan: free
+    rootDir: server
     buildCommand: npm ci --omit=dev
     startCommand: node index.js
-    rootDir: server
     envVars:
       - key: PORT
-        value: 10000       # Render assigns the actual port via this env var
+        value: 10000
     healthCheckPath: /health
