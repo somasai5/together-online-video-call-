@@ -677,10 +677,7 @@ chrome.runtime.onMessage.addListener((message) => {
         startDriftHeartbeat();
         appendChatMessage('Room created. Share the code!', 'system');
       } else {
-        // Show sync-enable banner (guest must interact before remote play() calls)
-        const banner = document.getElementById('tog-sync-banner');
-        if (banner) banner.classList.remove('hidden');
-        appendChatMessage('Joined room. Click "Join & Enable Sync" to start.', 'system');
+        appendChatMessage('Joined room! Ready to watch together.', 'system');
       }
 
       if (message.type === 'reconnected') {

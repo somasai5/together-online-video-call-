@@ -29,8 +29,11 @@
     {
       "matches": [
         "*://*.hotstar.com/*",
+        "*://hotstar.com/*",
         "*://*.disneyplus.hotstar.com/*",
-        "*://*.jiohotstar.com/*"
+        "*://disneyplus.hotstar.com/*",
+        "*://*.jiohotstar.com/*",
+        "*://jiohotstar.com/*"
       ],
       "js": ["content_script.js"],
       "run_at": "document_idle",
@@ -39,6 +42,7 @@
   ],
 
   "permissions": [
+    "tabs",
     "activeTab",
     "scripting",
     "storage",
@@ -48,8 +52,11 @@
 
   "host_permissions": [
     "*://*.hotstar.com/*",
+    "*://hotstar.com/*",
     "*://*.disneyplus.hotstar.com/*",
-    "*://*.jiohotstar.com/*"
+    "*://disneyplus.hotstar.com/*",
+    "*://*.jiohotstar.com/*",
+    "*://jiohotstar.com/*"
   ],
 
   "web_accessible_resources": [
@@ -60,8 +67,11 @@
       ],
       "matches": [
         "*://*.hotstar.com/*",
+        "*://hotstar.com/*",
         "*://*.disneyplus.hotstar.com/*",
-        "*://*.jiohotstar.com/*"
+        "*://disneyplus.hotstar.com/*",
+        "*://*.jiohotstar.com/*",
+        "*://jiohotstar.com/*"
       ]
     }
   ]

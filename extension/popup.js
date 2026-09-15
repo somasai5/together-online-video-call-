@@ -101,10 +101,9 @@ btnJoin.addEventListener('click', () => {
   setStatus('connecting', 'Joining room…');
   btnJoin.disabled = true;
 
-  // Pass along stored participantId for reconnect if applicable
   sendToBackground({
     type: 'ws-send',
-    payload: { type: 'join', roomCode: code, participantId },
+    payload: { type: 'join', roomCode: code },
   });
 });
 

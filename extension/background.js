@@ -76,10 +76,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected']).catch(() => {});
     }
 
-    // Broadcast to all Hotstar content script tabs
-    chrome.tabs.query({ url: ['*://*.hotstar.com/*', '*://*.disneyplus.hotstar.com/*', '*://*.jiohotstar.com/*'] }, (tabs) => {
+    // Broadcast to all Hotstar tabs
+    chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {});
+        if (!tab.url) continue;
+        const isHotstar = tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com');
+        if (isHotstar) {
+          chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {
+            // If tab was opened before extension reloaded, auto-inject content_script.js
+            if (type === 'room-created' || type === 'joined' || type === 'reconnected') {
+              chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                files: ['content_script.js'],
+              }).catch(() => {});
+            }
+          });
+        }
       }
     });
 
