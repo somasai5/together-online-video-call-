@@ -89,31 +89,27 @@ async function getLocalMediaStream() {
 }
 
 function showLocalStream(stream) {
+  const tile = document.getElementById('tog-local-tile');
   const video = document.getElementById('tog-local-video');
-  const placeholder = document.getElementById('tog-local-placeholder');
   if (!video) return;
 
-  if (stream && stream.getTracks().length > 0) {
+  if (stream && stream.getVideoTracks().length > 0) {
     if (video.srcObject !== stream) {
       video.srcObject = stream;
     }
     video.muted = true;
-    video.autoplay = true;
-    video.playsInline = true;
-    if (placeholder) placeholder.style.display = 'none';
-    video.style.display = 'block';
+    tile?.classList.add('has-video');
     video.play().catch(() => {});
   } else {
+    tile?.classList.remove('has-video');
     video.srcObject = null;
-    if (placeholder) placeholder.style.display = '';
-    video.style.display = 'none';
   }
 }
 
 function showRemoteStream(stream) {
+  const tile = document.getElementById('tog-remote-tile');
   const video = document.getElementById('tog-remote-video');
   const audio = document.getElementById('tog-remote-audio');
-  const placeholder = document.getElementById('tog-remote-placeholder');
 
   if (audio && stream && stream.getAudioTracks().length > 0) {
     if (audio.srcObject !== stream) {
@@ -128,40 +124,20 @@ function showRemoteStream(stream) {
 
   if (!video) return;
 
-  if (stream && stream.getTracks().length > 0) {
+  if (stream && stream.getVideoTracks().length > 0) {
     if (video.srcObject !== stream) {
       video.srcObject = stream;
     }
-    video.autoplay = true;
-    video.playsInline = true;
     video.muted = true;
+    tile?.classList.add('has-video');
+    video.play().catch(() => {});
 
-    const reveal = () => {
-      const vTracks = stream.getVideoTracks();
-      const hasLive = vTracks.length > 0 && vTracks.some((t) => t.enabled && t.readyState !== 'ended');
-      if (placeholder) placeholder.style.display = hasLive ? 'none' : '';
-      video.style.display = hasLive ? 'block' : 'none';
-      if (hasLive) video.play().catch(() => {});
-    };
-
-    reveal();
-
-    video.onloadeddata = reveal;
-    video.oncanplay = reveal;
-    video.onplaying = reveal;
-    video.onloadedmetadata = reveal;
-
-    stream.onaddtrack = reveal;
-    stream.onremovetrack = reveal;
-    stream.getVideoTracks().forEach((track) => {
-      track.onunmute = reveal;
-      track.onmute = reveal;
-      track.onended = reveal;
-    });
+    video.onloadeddata = () => { tile?.classList.add('has-video'); video.play().catch(() => {}); };
+    video.oncanplay = () => { tile?.classList.add('has-video'); video.play().catch(() => {}); };
+    video.onplaying = () => { tile?.classList.add('has-video'); };
   } else {
+    tile?.classList.remove('has-video');
     video.srcObject = null;
-    if (placeholder) placeholder.style.display = '';
-    video.style.display = 'none';
   }
 }
 

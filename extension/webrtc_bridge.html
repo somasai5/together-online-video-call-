@@ -81,8 +81,12 @@
     }
     body.spotlight-remote #tog-remote-tile { flex: 3.5; }
     body.spotlight-remote #tog-local-tile { flex: 1; max-width: 110px; }
-    body.spotlight-local #tog-local-tile { flex: 3.5; }
-    body.spotlight-local #tog-remote-tile { flex: 1; max-width: 110px; }
+    .tog-video-tile.has-video .tog-cam-placeholder {
+      display: none !important;
+    }
+    .tog-video-tile.has-video video {
+      display: block !important;
+    }
   </style>
 </head>
 <body>
@@ -96,7 +100,7 @@
   </div>
 
   <div class="tog-video-tile" id="tog-remote-tile" title="Click to spotlight friend's camera">
-    <video id="tog-remote-video" autoplay playsinline></video>
+    <video id="tog-remote-video" autoplay muted playsinline></video>
     <div class="tog-cam-placeholder" id="tog-remote-placeholder">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       <span>Friend</span>
