@@ -87,17 +87,50 @@ const ICE_SERVERS = [
 
 ---
 
-## Testing (Two Chrome Profiles)
+## 👫 Sharing with Your Partner (Cross-Computer Setup)
 
-1. Create two Chrome profiles: `chrome://settings/manageProfile`
-2. Load the unpacked extension in **both** profiles
-3. Open Hotstar in both and log in
-4. **Profile 1**: Click the extension icon → **Create Room** → copy the 6-character code
-5. **Profile 2**: Click the extension icon → **Join Room** → paste the code
+The cloud signaling server is already live at `wss://together-online-video-call.onrender.com`. You can connect with your partner from anywhere in the world in under a minute!
 
-> ✅ Test that the connection survives sitting idle for **2+ minutes** (MV3 offscreen document keepalive validation).
+### Step 1: Send the Extension to Your Partner
+Send them the `together-extension.zip` file (or zip the `extension/` folder).
+
+### Step 2: Install on Your Partner's Computer
+1. Have your partner extract `together-extension.zip` to a folder (e.g. on Desktop).
+2. In Google Chrome (or Edge/Brave), open `chrome://extensions`.
+3. Turn on the **Developer mode** toggle in the top-right corner.
+4. Click **Load unpacked** (top-left) and select the extracted `extension` folder.
+5. Click the puzzle icon (Extensions) in Chrome's top bar and **pin 📌 Together**.
 
 ---
+
+## 🍿 How to Watch Together
+
+1. **Host (You)**:
+   - Open Hotstar and start any movie or episode.
+   - Click the **Together** extension icon in Chrome.
+   - Click **Create Room** — you will get a 6-character room code (e.g. `ABC123`).
+   - Share this code with your partner over chat/call.
+
+2. **Guest (Your Partner)**:
+   - Open Hotstar in their browser.
+   - Click the **Together** extension icon.
+   - Paste the code into **Room Code** and click **Join Room**.
+   - Hotstar will automatically navigate and sync to the movie you're watching!
+
+3. **Enjoying the Experience**:
+   - 📞 **Video & Audio Call**: Click the call button in the floating PiP toolbar to see and talk to each other.
+   - ⏯️ **Instant Sync**: When either of you pauses, plays, or seeks, both screens react instantly.
+   - 🍿 **Ad Alert**: If either of you hits an ad, click the `🍿` button so your partner can pause with 1 click.
+   - ❤️ **Reactions & Chat**: Send floating hearts, emojis, and instant messages.
+
+---
+
+## Technical Stack & Architecture
+
+- **Signaling**: WebSockets over HTTPS (`wss://together-online-video-call.onrender.com`) hosted on Render.
+- **Audio/Video**: Direct Peer-to-Peer WebRTC with STUN NAT traversal.
+- **Playback Sync**: Ultra-low latency event relay (<200ms) with NTP clock drift calibration.
+- **UI**: Glassmorphic draggable & resizable PiP floating window, Shadow-DOM isolated.
 
 ## Key Technical Notes
 
