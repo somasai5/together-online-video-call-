@@ -498,13 +498,14 @@
   transform: scale(1.05);
 }
 
-/* ── Video Tiles ─────────────────────────────────────────────────────────── */
+/* ── Video Tiles & Resizing ──────────────────────────────────────────────── */
 #tog-webcam-section {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 10px;
   background: rgba(10, 8, 22, 0.6);
   transition: all var(--tog-transition);
+  align-items: center;
 }
 
 .tog-video-tile {
@@ -516,6 +517,13 @@
   background: var(--tog-surface-2);
   border: 1px solid var(--tog-border);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform var(--tog-transition), border-color var(--tog-transition), flex var(--tog-transition);
+}
+
+.tog-video-tile:hover {
+  border-color: var(--tog-accent-light);
+  transform: scale(1.01);
 }
 
 .tog-video-tile video {
@@ -531,11 +539,11 @@
 
 .tog-video-tile .tog-video-label {
   position: absolute;
-  bottom: 4px;
-  left: 5px;
-  font-size: 9px;
+  bottom: 5px;
+  left: 6px;
+  font-size: 10px;
   font-weight: 700;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
@@ -550,15 +558,59 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   background: linear-gradient(135deg, var(--tog-surface-2) 0%, var(--tog-surface) 100%);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--tog-text-muted);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .tog-cam-placeholder svg {
+  opacity: 0.55;
+}
+
+/* ── Spotlight / Focused Video Modes ── */
+#tog-webcam-section.spotlight-remote #tog-remote-tile {
+  flex: 3.5;
+  aspect-ratio: 16/9;
+}
+#tog-webcam-section.spotlight-remote #tog-local-tile {
+  flex: 1;
+  max-width: 110px;
+  aspect-ratio: 4/3;
+}
+
+#tog-webcam-section.spotlight-local #tog-local-tile {
+  flex: 3.5;
+  aspect-ratio: 16/9;
+}
+#tog-webcam-section.spotlight-local #tog-remote-tile {
+  flex: 1;
+  max-width: 110px;
+  aspect-ratio: 4/3;
+}
+
+/* ── Corner Drag-to-Resize Handle ── */
+#tog-pip-resizer {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tog-text-muted);
   opacity: 0.5;
+  transition: opacity 0.2s, color 0.2s;
+  z-index: 20;
+  user-select: none;
+}
+
+#tog-pip-resizer:hover {
+  opacity: 1;
+  color: var(--tog-accent-light);
 }
 
 /* ── PiP Toolbar ─────────────────────────────────────────────────────────── */

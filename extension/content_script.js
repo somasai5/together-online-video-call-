@@ -133,6 +133,7 @@ function injectOverlay() {
 
   attachOverlayListeners();
   makePipDraggable();
+  makePipResizable();
   log('Overlay injected successfully with Watch Party panel');
 }
 
@@ -192,7 +193,7 @@ function buildOverlayHTML() {
       ▶ Playback out of sync — click to resume
     </div>
 
-    <!-- ── Floating Picture-in-Picture (PiP) Window (Compact & Draggable) ── -->
+    <!-- ── Floating Picture-in-Picture (PiP) Window (Extendable & Draggable) ── -->
     <div id="tog-pip-window">
       <!-- PiP Window Draggable Header -->
       <div id="tog-pip-header">
@@ -202,6 +203,9 @@ function buildOverlayHTML() {
           <span class="tog-pip-room-pill" id="tog-pip-room-code">${escapeHTML(roomCode || '———')}</span>
         </div>
         <div class="tog-pip-window-controls">
+          <button class="tog-pip-icon-btn" id="tog-pip-size-btn" title="Resize Screen: Compact / Medium / Large / Theater">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          </button>
           <button class="tog-pip-icon-btn" id="tog-pip-chat-toggle" title="Open / Close Chat">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             <span id="tog-chat-unread-badge" class="hidden">0</span>
@@ -228,20 +232,20 @@ function buildOverlayHTML() {
         </button>
       </div>
 
-      <!-- Dual Webcam Video Section -->
+      <!-- Dual Webcam Video Section (Supports Side-by-Side & Spotlight modes) -->
       <div id="tog-webcam-section">
-        <div class="tog-video-tile" id="tog-local-tile">
+        <div class="tog-video-tile" id="tog-local-tile" title="Click to spotlight your camera">
           <video id="tog-local-video" autoplay muted playsinline></video>
           <div class="tog-cam-placeholder" id="tog-local-placeholder">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
             <span>You</span>
           </div>
           <span class="tog-video-label">You</span>
         </div>
-        <div class="tog-video-tile" id="tog-remote-tile">
+        <div class="tog-video-tile" id="tog-remote-tile" title="Click to spotlight friend's camera">
           <video id="tog-remote-video" autoplay playsinline></video>
           <div class="tog-cam-placeholder" id="tog-remote-placeholder">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span>Friend</span>
           </div>
           <span class="tog-video-label">Friend</span>
@@ -286,6 +290,18 @@ function buildOverlayHTML() {
 
       <!-- Transient Chat Toast (Appears briefly on incoming messages when popover is closed) -->
       <div id="tog-chat-toast" class="hidden"></div>
+
+      <!-- Drag-to-Resize Corner Grip Handle -->
+      <div id="tog-pip-resizer" title="Drag to resize video window">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+          <circle cx="8" cy="2" r="1.2"/>
+          <circle cx="8" cy="5" r="1.2"/>
+          <circle cx="5" cy="5" r="1.2"/>
+          <circle cx="8" cy="8" r="1.2"/>
+          <circle cx="5" cy="8" r="1.2"/>
+          <circle cx="2" cy="8" r="1.2"/>
+        </svg>
+      </div>
     </div>
 
     <!-- ── Floating Action Button (Shows when PiP is docked) ── -->
@@ -330,7 +346,6 @@ function makePipDraggable() {
       let newLeft = initialLeft + dx;
       let newTop = initialTop + dy;
 
-      // Clamping within viewport
       const maxLeft = window.innerWidth - pip.offsetWidth - 12;
       const maxTop = window.innerHeight - pip.offsetHeight - 12;
       newLeft = Math.max(12, Math.min(newLeft, maxLeft));
@@ -352,15 +367,105 @@ function makePipDraggable() {
   });
 }
 
+function makePipResizable() {
+  const pip = document.getElementById('tog-pip-window');
+  const resizer = document.getElementById('tog-pip-resizer');
+  if (!pip || !resizer) return;
+
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  resizer.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = pip.offsetWidth;
+    pip.style.transition = 'none';
+
+    const onMouseMove = (ev) => {
+      if (!isResizing) return;
+      const dx = ev.clientX - startX;
+      let newWidth = Math.max(260, Math.min(startWidth + dx, window.innerWidth - 30));
+      pip.style.width = `${newWidth}px`;
+    };
+
+    const onMouseUp = () => {
+      isResizing = false;
+      pip.style.transition = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
 function attachOverlayListeners() {
   const pipWindow = document.getElementById('tog-pip-window');
   const toggleBtn = document.getElementById('tog-toggle-btn');
   const closeBtn = document.getElementById('tog-pip-close-btn');
   const minimizeBtn = document.getElementById('tog-pip-minimize-btn');
+  const sizeBtn = document.getElementById('tog-pip-size-btn');
   const chatToggleBtn = document.getElementById('tog-pip-chat-toggle');
   const chatPopover = document.getElementById('tog-chat-popover');
   const chatBadge = document.getElementById('tog-chat-unread-badge');
   const fabBadge = document.getElementById('tog-unread-badge');
+
+  // Size preset cycler
+  const SIZES = [
+    { name: 'Compact',  width: '290px' },
+    { name: 'Medium',   width: '440px' },
+    { name: 'Large',    width: '620px' },
+    { name: 'Theater',  width: '820px' },
+  ];
+  let currentSizeIdx = 0;
+
+  sizeBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    currentSizeIdx = (currentSizeIdx + 1) % SIZES.length;
+    const target = SIZES[currentSizeIdx];
+    if (pipWindow) {
+      pipWindow.style.width = target.width;
+      // Clamping within viewport if right edge exceeds screen
+      const rect = pipWindow.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 10) {
+        pipWindow.style.left = `${Math.max(10, window.innerWidth - pipWindow.offsetWidth - 15)}px`;
+        pipWindow.style.right = 'auto';
+      }
+    }
+    showChatToast(`📐 Screen Size: ${target.name} (${target.width})`);
+  });
+
+  // Spotlight click on remote (friend) video
+  document.getElementById('tog-remote-tile')?.addEventListener('click', () => {
+    const sec = document.getElementById('tog-webcam-section');
+    if (!sec) return;
+    if (sec.classList.contains('spotlight-remote')) {
+      sec.classList.remove('spotlight-remote');
+      showChatToast('👥 Dual View');
+    } else {
+      sec.classList.remove('spotlight-local');
+      sec.classList.add('spotlight-remote');
+      showChatToast('🔍 Spotlight: Friend (Full Screen)');
+    }
+  });
+
+  // Spotlight click on local (you) video
+  document.getElementById('tog-local-tile')?.addEventListener('click', () => {
+    const sec = document.getElementById('tog-webcam-section');
+    if (!sec) return;
+    if (sec.classList.contains('spotlight-local')) {
+      sec.classList.remove('spotlight-local');
+      showChatToast('👥 Dual View');
+    } else {
+      sec.classList.remove('spotlight-remote');
+      sec.classList.add('spotlight-local');
+      showChatToast('🔍 Spotlight: You');
+    }
+  });
 
   function openChatPopover() {
     chatPopover?.classList.remove('hidden');
@@ -1447,14 +1552,14 @@ async function getLocalMediaStream() {
   }
   try {
     return await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 480, max: 640 }, height: { ideal: 360, max: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' },
+      video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' },
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   } catch (err) {
-    log('getUserMedia (audio+video) failed, trying video only:', err);
+    log('getUserMedia (audio+video HD) failed, trying standard video:', err);
     try {
       return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 480, max: 640 }, height: { ideal: 360, max: 480 } },
+        video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 } },
         audio: false,
       });
     } catch (e2) {
