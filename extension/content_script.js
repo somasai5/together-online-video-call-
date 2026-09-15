@@ -64,7 +64,8 @@ let clockSyncSamples = [];
 let lastBroadcastUrl = null;
 let pendingMovieUrl  = null;
 
-let isCallActive     = false;
+let isCallActive       = false;
+let lastIncomingOffer  = null;
 
 let overlayRoot      = null;        // #together-overlay-root
 let panelVisible     = true;
@@ -612,11 +613,13 @@ function attachOverlayListeners() {
   document.getElementById('tog-answer-call-btn')?.addEventListener('click', () => {
     document.getElementById('tog-call-banner')?.classList.add('hidden');
     document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
-    sendToBridge({ type: 'answer-call' });
+    sendToBridge({ type: 'answer-call', offer: lastIncomingOffer });
+    lastIncomingOffer = null;
   });
   document.getElementById('tog-decline-call-btn')?.addEventListener('click', () => {
     document.getElementById('tog-call-banner')?.classList.add('hidden');
     document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
+    lastIncomingOffer = null;
     sendToBridge({ type: 'end-call', notify: true });
     appendChatMessage('Declined video call.', 'system');
   });
@@ -1587,6 +1590,13 @@ function handleBridgeMessage(data) {
       }
       break;
 
+    case 'bridge-ready':
+      sendToBridge({ type: 'set-role', isHost });
+      if (lastIncomingOffer) {
+        sendToBridge(lastIncomingOffer);
+      }
+      break;
+
     case 'bridge-status':
       log('Bridge status update:', data.status);
       if (data.status === 'calling') {
@@ -1600,6 +1610,7 @@ function handleBridgeMessage(data) {
         appendChatMessage('Calling friend...', 'system');
       } else if (data.status === 'connected') {
         isCallActive = true;
+        lastIncomingOffer = null;
         const callBtn = document.getElementById('tog-call-btn');
         if (callBtn) {
           callBtn.classList.add('active');
@@ -1614,6 +1625,7 @@ function handleBridgeMessage(data) {
         appendChatMessage('📞 Friend is calling you... Click "Answer" or the Call button to connect video.', 'system');
       } else if (data.status === 'ended' || data.status === 'disconnected') {
         isCallActive = false;
+        lastIncomingOffer = null;
         const callBtn = document.getElementById('tog-call-btn');
         if (callBtn) {
           callBtn.classList.remove('active');
@@ -1661,10 +1673,11 @@ window.addEventListener('message', (event) => {
 
 function handleCallToggle() {
   const callBtn = document.getElementById('tog-call-btn');
-  if (callBtn && callBtn.classList.contains('tog-btn-ringing')) {
+  if (lastIncomingOffer || (callBtn && callBtn.classList.contains('tog-btn-ringing'))) {
     document.getElementById('tog-call-banner')?.classList.add('hidden');
-    callBtn.classList.remove('tog-btn-ringing');
-    sendToBridge({ type: 'answer-call' });
+    callBtn?.classList.remove('tog-btn-ringing');
+    sendToBridge({ type: 'answer-call', offer: lastIncomingOffer });
+    lastIncomingOffer = null;
     return;
   }
 
@@ -1880,10 +1893,16 @@ chrome.runtime.onMessage.addListener((message) => {
 
     // ── WebRTC signaling (forward to bridge) ────────────────────────────────
     case 'offer':
+      lastIncomingOffer = message;
+      document.getElementById('tog-call-banner')?.classList.remove('hidden');
+      document.getElementById('tog-call-btn')?.classList.add('tog-btn-ringing');
+      appendChatMessage('📞 Friend is calling you... Click "Answer" or the Call button to connect video.', 'system');
       sendToBridge(message);
       break;
 
     case 'answer':
+      lastIncomingOffer = null;
+      document.getElementById('tog-call-banner')?.classList.add('hidden');
       sendToBridge(message);
       break;
 
@@ -1892,6 +1911,15 @@ chrome.runtime.onMessage.addListener((message) => {
       break;
 
     case 'call-ended':
+      lastIncomingOffer = null;
+      isCallActive = false;
+      document.getElementById('tog-call-banner')?.classList.add('hidden');
+      const callEndedBtn = document.getElementById('tog-call-btn');
+      if (callEndedBtn) {
+        callEndedBtn.classList.remove('active');
+        callEndedBtn.classList.remove('tog-btn-ringing');
+        callEndedBtn.setAttribute('title', 'Start Video Call');
+      }
       sendToBridge({ type: 'call-ended' });
       appendChatMessage('Video call ended by friend.', 'system');
       break;

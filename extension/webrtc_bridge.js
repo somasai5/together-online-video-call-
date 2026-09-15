@@ -3,7 +3,7 @@
  *
  * Runs inside the extension iframe (chrome-extension://.../webrtc_bridge.html).
  * Bypasses host streaming page Content Security Policy (CSP) completely.
- * Implements W3C Perfect Negotiation to prevent glare / duplicate collision.
+ * Implements robust WebRTC signaling with collision handling.
  */
 
 'use strict';
@@ -36,17 +36,13 @@ let remoteStream = null;
 let pendingOffer = null;
 let pendingIceCandidates = [];
 let isHost = false;
-
-// Perfect negotiation state variables
 let makingOffer = false;
-let ignoreOffer = false;
-let isSettingRemoteAnswerPending = false;
 
 function log(...args) {
   console.log('[Together-Bridge]', ...args);
 }
 
-// Single-channel communication with parent content script (NO chrome.runtime duplicate loops)
+// Single-channel communication with parent content script
 function notifyContent(payload) {
   try {
     window.parent.postMessage({ ...payload, source: 'webrtc_bridge' }, '*');
@@ -286,7 +282,10 @@ async function startCall() {
 
 async function answerCall(offerMessage) {
   const offer = offerMessage || pendingOffer;
-  if (!offer) return;
+  if (!offer) {
+    log('answerCall called without offer, starting new call');
+    return startCall();
+  }
   pendingOffer = null;
 
   log('Bridge answering call...');
@@ -295,6 +294,8 @@ async function answerCall(offerMessage) {
     showLocalStream(localStream);
   } catch (err) {
     log('Bridge answer getLocalMediaStream failed:', err);
+    notifyContent({ type: 'bridge-error', message: 'Camera/Microphone permission denied.' });
+    return;
   }
 
   await setupPeerConnection();
@@ -315,24 +316,21 @@ async function answerCall(offerMessage) {
 
 async function handleIncomingOffer(message) {
   log('Bridge received incoming offer');
-  const isPolite = !isHost;
-  const readyForOffer = !makingOffer && (pc === null || pc.signalingState === 'stable' || isSettingRemoteAnswerPending);
-  const offerCollision = !readyForOffer;
-
-  ignoreOffer = !isPolite && offerCollision;
-  if (ignoreOffer) {
-    log('Glare detected: Impolite host ignoring guest offer');
-    return;
-  }
-
   pendingOffer = message;
 
-  if (offerCollision && isPolite && pc && pc.signalingState !== 'closed') {
+  const isPolite = !isHost;
+  const offerCollision = makingOffer || (pc && pc.signalingState === 'have-local-offer');
+
+  if (offerCollision) {
+    if (!isPolite) {
+      log('Glare detected: Impolite peer ignoring offer collision');
+      return;
+    }
+    log('Glare detected: Polite peer rolling back local offer');
     try {
-      await pc.setLocalDescription({ type: 'rollback' });
-      log('Polite peer rolled back local offer');
+      if (pc) await pc.setLocalDescription({ type: 'rollback' });
     } catch (e) {
-      log('Rollback error:', e);
+      log('Rollback notice:', e);
     }
   }
 
@@ -355,7 +353,6 @@ async function handleIncomingAnswer(message) {
   }
 
   try {
-    isSettingRemoteAnswerPending = true;
     const sdpObj = message.sdp?.sdp ? message.sdp : { type: message.sdp?.type || 'answer', sdp: message.sdp?.sdp || message.sdp };
     await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
     await flushIceCandidates();
@@ -363,8 +360,6 @@ async function handleIncomingAnswer(message) {
     notifyContent({ type: 'bridge-status', status: 'connected' });
   } catch (err) {
     log('Bridge handle answer error:', err);
-  } finally {
-    isSettingRemoteAnswerPending = false;
   }
 }
 
@@ -380,9 +375,7 @@ async function handleIncomingIce(message) {
   try {
     await pc.addIceCandidate(new RTCIceCandidate(cand));
   } catch (e) {
-    if (!ignoreOffer) {
-      log('Bridge ICE candidate error:', e);
-    }
+    log('Bridge ICE candidate error:', e);
   }
 }
 
@@ -414,8 +407,6 @@ function endCall(notify = true) {
   pendingIceCandidates = [];
   pendingOffer = null;
   makingOffer = false;
-  ignoreOffer = false;
-  isSettingRemoteAnswerPending = false;
   showLocalStream(null);
   showRemoteStream(null);
   notifyContent({ type: 'bridge-status', status: 'ended' });
@@ -528,3 +519,6 @@ document.getElementById('tog-local-tile')?.addEventListener('click', () => {
 ['click', 'pointerdown', 'keydown'].forEach((evt) => {
   document.addEventListener(evt, unlockAudio, { capture: true });
 });
+
+// Notify parent content script that bridge is mounted and ready
+notifyContent({ type: 'bridge-ready' });
