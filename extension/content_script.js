@@ -24,9 +24,10 @@ const ICE_SERVERS = [
   { urls: 'stun:global.stun.twilio.com:3478' },
 ];
 
-const DRIFT_HEARTBEAT_INTERVAL_MS = 200;    // 200ms ultra-high frequency heartbeat (5x per second)
-const DRIFT_HARD_SEEK_THRESHOLD   = 0.12;   // 120ms — snap seek if drift exceeds ~1/8th second
-const DRIFT_NUDGE_THRESHOLD       = 0.012;  // 12ms — sub-frame tolerance (< 1 video frame at 60fps)
+const DRIFT_HEARTBEAT_INTERVAL_MS = 1000;   // 1s smooth heartbeat (prevents network / buffer flooding)
+const DRIFT_DEADZONE_THRESHOLD    = 0.35;   // 350ms — perfectly synchronized, no seeking or adjustment needed
+const DRIFT_HARD_SEEK_THRESHOLD   = 1.5;    // 1.5s — only hard seek if desync is substantial
+const HARD_SEEK_COOLDOWN_MS       = 2000;   // 2s cooldown between hard seeks so buffer can fill without interruption
 
 const EMOJIS = ['❤️', '😂', '😮', '👏', '🔥', '😢'];
 
@@ -952,7 +953,15 @@ function getCorrectedHostTime(hostTime, sentAt, hostPaused, hostRate) {
   return hostPaused ? hostTime : (hostTime + (elapsedSeconds * baseRate));
 }
 
-// ─── Playback sync — guest side (ultra-low latency) ──────────────────────────
+let lastHardSeekTime = 0;
+
+function isVideoBuffering(v) {
+  if (!v) return false;
+  // readyState < 3 means HAVE_NOTHING (0), HAVE_METADATA (1), or HAVE_CURRENT_DATA (2) - stalling / downloading
+  return v.seeking || v.readyState < 3 || v.networkState === 2;
+}
+
+// ─── Playback sync — guest side (smooth & buffer-protected) ───────────────────
 
 function applySync(action, currentTime, sentAt, rate) {
   if (!videoEl || isInAdBreak) return;
@@ -965,11 +974,11 @@ function applySync(action, currentTime, sentAt, rate) {
 
   isSyncing = true;
   try {
-    if (Math.abs(videoEl.currentTime - targetTime) > 0.015) {
-      videoEl.currentTime = targetTime;
-    }
-
     if (action === 'play') {
+      // If not already within 0.4s, align time
+      if (Math.abs(videoEl.currentTime - targetTime) > 0.4) {
+        videoEl.currentTime = targetTime;
+      }
       if (videoEl.playbackRate !== baseRate) {
         videoEl.playbackRate = baseRate;
       }
@@ -983,17 +992,22 @@ function applySync(action, currentTime, sentAt, rate) {
     } else if (action === 'pause') {
       if (!videoEl.paused) videoEl.pause();
       videoEl.currentTime = targetTime;
-    } else if (action === 'seek' || action === 'ratechange') {
+    } else if (action === 'seek') {
+      videoEl.currentTime = targetTime;
+      if (videoEl.playbackRate !== baseRate) {
+        videoEl.playbackRate = baseRate;
+      }
+    } else if (action === 'ratechange') {
       if (videoEl.playbackRate !== baseRate) {
         videoEl.playbackRate = baseRate;
       }
     }
   } finally {
-    setTimeout(() => { isSyncing = false; }, 40);
+    setTimeout(() => { isSyncing = false; }, 80);
   }
 }
 
-// ─── Frame-accurate drift correction (host heartbeat → guest PID nudge) ─────
+// ─── Professional PID Drift Correction (buffer-safe) ─────────────────────────
 
 function startDriftHeartbeat() {
   if (!isHost) return;
@@ -1027,6 +1041,11 @@ function stopDriftHeartbeat() {
 function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
   if (!videoEl || isHost || isInAdBreak || isSyncing) return;
 
+  // Crucial buffering guard: Never disrupt the player while it is loading video chunks!
+  if (isVideoBuffering(videoEl)) {
+    return;
+  }
+
   if (typeof hostRate === 'number' && hostRate > 0) {
     hostPlaybackRate = hostRate;
   }
@@ -1039,21 +1058,21 @@ function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
       isSyncing = true;
       videoEl.pause();
       videoEl.currentTime = correctedHostTime;
-      setTimeout(() => { isSyncing = false; }, 40);
+      setTimeout(() => { isSyncing = false; }, 80);
       return;
     } else if (!hostPaused && videoEl.paused && syncEnabled) {
       isSyncing = true;
-      videoEl.currentTime = correctedHostTime;
       videoEl.playbackRate = baseRate;
+      videoEl.currentTime = correctedHostTime;
       videoEl.play().catch(() => {});
-      setTimeout(() => { isSyncing = false; }, 40);
+      setTimeout(() => { isSyncing = false; }, 80);
       return;
     }
   }
 
-  // If host is paused, snap exactly to host position
+  // If host is paused, lock position
   if (hostPaused && videoEl.paused) {
-    if (Math.abs(videoEl.currentTime - correctedHostTime) > 0.010) {
+    if (Math.abs(videoEl.currentTime - correctedHostTime) > 0.08) {
       videoEl.currentTime = correctedHostTime;
     }
     return;
@@ -1061,35 +1080,40 @@ function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
 
   const diff = Math.abs(videoEl.currentTime - correctedHostTime);
 
-  // Sub-frame tolerance (< 12ms / ~0.7 frame at 60fps) — considered in perfect frame-lock
-  if (diff < DRIFT_NUDGE_THRESHOLD) {
+  // 1. Deadzone (< 350ms): Imperceptible human sync — keep standard playback rate
+  if (diff <= DRIFT_DEADZONE_THRESHOLD) {
     if (videoEl.playbackRate !== baseRate) {
       videoEl.playbackRate = baseRate;
     }
     return;
   }
 
-  // Hard seek (if drift > 120ms) — instant sub-second snap seek
+  // 2. Large desync (> 1.5s): snap seek with 2s cooldown to prevent buffer churn
   if (diff > DRIFT_HARD_SEEK_THRESHOLD) {
-    isSyncing = true;
-    videoEl.currentTime = correctedHostTime;
-    if (videoEl.playbackRate !== baseRate) videoEl.playbackRate = baseRate;
-    setTimeout(() => { isSyncing = false; }, 40);
-    log(`Frame-accurate lock (hard seek): Δ${diff.toFixed(3)}s`);
-  } else {
-    // Proportional Micro-nudge (12ms - 120ms):
-    // Smoothly speed up or slow down by 1-6% to close the gap seamlessly
-    const isLagging = correctedHostTime > videoEl.currentTime;
-    const rateDelta = Math.min(diff * 0.9, 0.06); // micro adjustment without pitch distortion
-    const targetRate = isLagging ? (baseRate + rateDelta) : Math.max(baseRate - rateDelta, 0.85);
-
-    videoEl.playbackRate = targetRate;
-
-    clearTimeout(videoEl._togNudgeTimeout);
-    videoEl._togNudgeTimeout = setTimeout(() => {
-      if (videoEl && !isSyncing) videoEl.playbackRate = baseRate;
-    }, 180);
+    const now = Date.now();
+    if (now - lastHardSeekTime > HARD_SEEK_COOLDOWN_MS) {
+      lastHardSeekTime = now;
+      isSyncing = true;
+      videoEl.currentTime = correctedHostTime;
+      if (videoEl.playbackRate !== baseRate) videoEl.playbackRate = baseRate;
+      setTimeout(() => { isSyncing = false; }, 100);
+      log(`Drift snap seek: Δ${diff.toFixed(2)}s -> ${correctedHostTime.toFixed(2)}s`);
+    }
+    return;
   }
+
+  // 3. Smooth PID Micro-Adjustment (350ms - 1.5s):
+  // Adjust playback rate by ±2% to ±4% to seamlessly pull the guest into lockstep without buffering
+  const isLagging = correctedHostTime > videoEl.currentTime;
+  const speedDelta = Math.min(diff * 0.035, 0.05); // max 5% adjustment (completely inaudible & smooth)
+  const targetRate = isLagging ? (baseRate + speedDelta) : Math.max(baseRate - speedDelta, 0.95);
+
+  videoEl.playbackRate = targetRate;
+
+  clearTimeout(videoEl._togNudgeTimeout);
+  videoEl._togNudgeTimeout = setTimeout(() => {
+    if (videoEl && !isSyncing) videoEl.playbackRate = baseRate;
+  }, 400);
 }
 
 // ─── Ad break detection & auto-skip ──────────────────────────────────────────
@@ -1355,13 +1379,16 @@ async function getLocalMediaStream() {
   }
   try {
     return await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
-      audio: { echoCancellation: true, noiseSuppression: true },
+      video: { width: { ideal: 480, max: 640 }, height: { ideal: 360, max: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   } catch (err) {
     log('getUserMedia (audio+video) failed, trying video only:', err);
     try {
-      return await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      return await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 480, max: 640 }, height: { ideal: 360, max: 480 } },
+        audio: false,
+      });
     } catch (e2) {
       log('getUserMedia video-only failed, trying audio only:', e2);
       return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
