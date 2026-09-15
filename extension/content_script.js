@@ -22,19 +22,16 @@ const ICE_SERVERS = [
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
   { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
   { urls: 'stun:openrelay.metered.ca:80' },
   {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+      'turns:openrelay.metered.ca:443?transport=tcp',
+      'turns:openrelay.metered.ca:5349?transport=tcp',
+    ],
     username: 'openrelayproject',
     credential: 'openrelayproject',
   },
@@ -1645,6 +1642,9 @@ async function setupPeerConnection() {
   pc = new RTCPeerConnection({
     iceServers: ICE_SERVERS,
     iceTransportPolicy: 'all',
+    iceCandidatePoolSize: 10,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
   });
 
   if (localStream) {
@@ -1696,15 +1696,22 @@ async function setupPeerConnection() {
     }
   });
 
-  pc.addEventListener('iceconnectionstatechange', () => {
+  pc.addEventListener('iceconnectionstatechange', async () => {
     log('ICE Connection state:', pc.iceConnectionState);
     if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
       log('P2P / Relay media connection established successfully!');
     } else if (pc.iceConnectionState === 'failed') {
       log('ICE connection failed, attempting ICE restart...');
       try {
-        if (typeof pc.restartIce === 'function') pc.restartIce();
-      } catch {}
+        if (typeof pc.restartIce === 'function' && isHost) {
+          pc.restartIce();
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          sendWS({ type: 'offer', sdp: { type: offer.type, sdp: offer.sdp } });
+        }
+      } catch (err) {
+        log('ICE restart error:', err);
+      }
     }
   });
 
@@ -2265,12 +2272,15 @@ async function handleIncomingAnswer(message) {
 
 async function handleIncomingIce(message) {
   if (!message.candidate) return;
+  const cand = message.candidate.candidate ? message.candidate : (typeof message.candidate === 'string' ? { candidate: message.candidate } : message.candidate);
+  if (!cand || !cand.candidate) return;
+
   if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
-    pendingIceCandidates.push(message.candidate);
+    pendingIceCandidates.push(cand);
     return;
   }
   try {
-    await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+    await pc.addIceCandidate(new RTCIceCandidate(cand));
   } catch (e) {
     log('ICE candidate error:', e);
   }
@@ -2281,7 +2291,10 @@ async function flushIceCandidates() {
   while (pendingIceCandidates.length > 0) {
     const candidate = pendingIceCandidates.shift();
     try {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      if (candidate) {
+        const cand = candidate.candidate ? candidate : (typeof candidate === 'string' ? { candidate: candidate } : candidate);
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      }
     } catch (e) {
       log('Flush ICE error:', e);
     }
