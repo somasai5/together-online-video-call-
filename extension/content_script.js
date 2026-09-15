@@ -1651,6 +1651,17 @@ async function setupPeerConnection() {
     localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
   }
 
+  // Ensure transceivers exist so both sides can receive video & audio tracks reliably
+  if (pc.addTransceiver) {
+    const senders = pc.getSenders();
+    if (!senders.some((s) => s.track && s.track.kind === 'audio')) {
+      try { pc.addTransceiver('audio', { direction: 'sendrecv' }); } catch {}
+    }
+    if (!senders.some((s) => s.track && s.track.kind === 'video')) {
+      try { pc.addTransceiver('video', { direction: 'sendrecv' }); } catch {}
+    }
+  }
+
   pc.addEventListener('track', (e) => {
     log('Remote track received:', e.track.kind, e.track.id);
     if (e.streams && e.streams[0]) {
@@ -1666,6 +1677,10 @@ async function setupPeerConnection() {
     e.track.onunmute = () => {
       log('Remote track unmuted:', e.track.kind);
       showRemoteStream(remoteStream);
+    };
+
+    e.track.onmute = () => {
+      log('Remote track muted:', e.track.kind);
     };
   });
 
@@ -1801,8 +1816,12 @@ function showRemoteStream(stream) {
     if (video.srcObject !== stream) {
       video.srcObject = stream;
     }
-    if (placeholder) placeholder.style.display = 'none';
-    video.style.display = 'block';
+    const hasVideo = stream.getVideoTracks().length > 0 && stream.getVideoTracks().some((t) => t.readyState === 'live');
+    if (placeholder) placeholder.style.display = hasVideo ? 'none' : '';
+    video.style.display = hasVideo ? 'block' : 'none';
+
+    video.autoplay = true;
+    video.playsInline = true;
 
     const p = video.play();
     if (p && typeof p.catch === 'function') {
