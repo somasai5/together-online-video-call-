@@ -1,127 +1,414 @@
-/* ── Together Overlay CSS ──────────────────────────────────────────────────────
+/* ── Together Overlay CSS — Modern Glassmorphic PiP & Drawer Layout ───────────────
    Loaded as a web_accessible_resource and injected by content_script.js.
-   No inline styles — all overlay styling lives here.
    ──────────────────────────────────────────────────────────────────────────── */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-/* ── CSS custom properties ────────────────────────────────────────────────── */
+/* ── Custom Properties ────────────────────────────────────────────────────── */
 #together-overlay-root {
-  --tog-bg: rgba(10, 8, 24, 0.92);
-  --tog-surface: rgba(26, 23, 48, 0.96);
-  --tog-surface-2: rgba(35, 31, 58, 0.98);
-  --tog-border: rgba(46, 40, 80, 0.9);
+  --tog-bg: rgba(13, 10, 28, 0.95);
+  --tog-surface: rgba(24, 20, 48, 0.92);
+  --tog-surface-2: rgba(36, 31, 66, 0.95);
+  --tog-surface-hover: rgba(50, 44, 88, 0.95);
+  --tog-border: rgba(68, 58, 115, 0.6);
+  --tog-border-light: rgba(124, 58, 237, 0.4);
   --tog-accent: #7c3aed;
-  --tog-accent-light: #9f68f5;
-  --tog-accent-glow: rgba(124, 58, 237, 0.4);
-  --tog-text: #f0eeff;
-  --tog-text-muted: #8b82b0;
-  --tog-green: #22c55e;
-  --tog-red: #ef4444;
-  --tog-radius: 12px;
+  --tog-accent-light: #a78bfa;
+  --tog-accent-glow: rgba(124, 58, 237, 0.45);
+  --tog-text: #f8fafc;
+  --tog-text-muted: #94a3b8;
+  --tog-green: #10b981;
+  --tog-green-glow: rgba(16, 185, 129, 0.4);
+  --tog-red: #f43f5e;
+  --tog-red-glow: rgba(244, 63, 94, 0.4);
+  --tog-amber: #f59e0b;
+  --tog-radius-lg: 18px;
+  --tog-radius-md: 12px;
   --tog-radius-sm: 8px;
-  --tog-transition: 0.18s ease;
-  --tog-panel-width: 300px;
-  font-family: 'Inter', system-ui, sans-serif;
+  --tog-radius-pill: 9999px;
+  --tog-shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--tog-border);
+  --tog-shadow-glow: 0 0 25px var(--tog-accent-glow);
+  --tog-transition: 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  --tog-drawer-width: 330px;
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   color: var(--tog-text);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ── Root container ───────────────────────────────────────────────────────── */
+/* ── Root Container ───────────────────────────────────────────────────────── */
 #together-overlay-root {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  inset: 0;
   z-index: 2147483647;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  pointer-events: none; /* children opt-in */
+  pointer-events: none;
+  overflow: hidden;
 }
 
-/* ── Toggle button (always visible) ──────────────────────────────────────── */
+.hidden, #together-overlay-root .hidden {
+  display: none !important;
+}
+
+/* ── Floating Action Button (FAB Toggle) ──────────────────────────────────── */
 #tog-toggle-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
   pointer-events: all;
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--tog-accent) 0%, #5b21b6 100%);
-  border: none;
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #4c1d95 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 20px var(--tog-accent-glow), 0 2px 8px rgba(0,0,0,0.5);
-  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
-  flex-shrink: 0;
+  box-shadow: 0 8px 30px var(--tog-accent-glow), 0 2px 10px rgba(0, 0, 0, 0.5);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition), background var(--tog-transition);
+  z-index: 2147483646;
 }
-#tog-toggle-btn:hover {
-  transform: scale(1.08);
-  box-shadow: 0 6px 28px var(--tog-accent-glow), 0 2px 8px rgba(0,0,0,0.5);
-}
-#tog-toggle-btn svg { width: 22px; height: 22px; fill: #fff; }
 
-/* ── Sync enable banner ───────────────────────────────────────────────────── */
-#tog-sync-banner {
-  pointer-events: all;
-  background: linear-gradient(135deg, var(--tog-accent), #5b21b6);
-  border-radius: var(--tog-radius);
-  padding: 10px 16px;
+#tog-toggle-btn:hover {
+  transform: scale(1.08) translateY(-2px);
+  box-shadow: 0 12px 35px var(--tog-accent-glow), 0 4px 15px rgba(0, 0, 0, 0.6);
+}
+
+#tog-toggle-btn:active {
+  transform: scale(0.95);
+}
+
+#tog-toggle-btn svg {
+  width: 24px;
+  height: 24px;
+  fill: #ffffff;
+  transition: transform var(--tog-transition);
+}
+
+#tog-unread-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  background: var(--tog-red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  box-shadow: 0 4px 20px var(--tog-accent-glow);
+  justify-content: center;
+  border: 2px solid var(--tog-bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  animation: tog-badge-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes tog-badge-pop {
+  0% { transform: scale(0); }
+  100% { transform: scale(1); }
+}
+
+/* ── Top-Center Movie Switch Notification Banner ─────────────────────────── */
+#tog-movie-banner {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: all;
+  background: rgba(18, 14, 40, 0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--tog-accent-light);
+  border-radius: var(--tog-radius-pill);
+  padding: 8px 16px 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), var(--tog-shadow-glow);
+  z-index: 2147483646;
+  animation: tog-banner-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tog-banner-slide-down {
+  from { opacity: 0; transform: translate(-50%, -20px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+#tog-movie-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tog-movie-text strong {
+  color: var(--tog-accent-light);
+  font-weight: 700;
+}
+
+.tog-movie-banner-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tog-btn-switch {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  color: #fff;
+  border: none;
+  border-radius: var(--tog-radius-pill);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 10px var(--tog-green-glow);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+.tog-btn-switch:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px var(--tog-green-glow);
+}
+
+.tog-btn-dismiss {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--tog-text-muted);
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--tog-transition), color var(--tog-transition);
+}
+
+.tog-btn-dismiss:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+/* ── Top-Right Incoming Call Banner ───────────────────────────────────────── */
+#tog-call-banner {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  pointer-events: all;
+  background: rgba(16, 185, 129, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--tog-radius-md);
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 10px 35px var(--tog-green-glow);
+  z-index: 2147483646;
+  animation: tog-call-shake 2s infinite ease-in-out;
+}
+
+@keyframes tog-call-shake {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.03); }
+}
+
+#tog-call-banner span {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.tog-call-banner-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tog-action-btn {
+  border: none;
+  border-radius: var(--tog-radius-sm);
+  padding: 6px 14px;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform var(--tog-transition), background var(--tog-transition);
+}
+
+.tog-btn-answer {
+  background: #ffffff;
+  color: #065f46;
+}
+
+.tog-btn-answer:hover {
+  background: #f0fdf4;
+  transform: scale(1.06);
+}
+
+.tog-btn-decline {
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.tog-btn-decline:hover {
+  background: var(--tog-red);
+  border-color: var(--tog-red);
+}
+
+/* ── Autoplay Sync Banner ─────────────────────────────────────────────────── */
+#tog-sync-banner {
+  position: fixed;
+  bottom: 84px;
+  right: 24px;
+  pointer-events: all;
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #5b21b6 100%);
+  border: 1px solid var(--tog-accent-light);
+  border-radius: var(--tog-radius-pill);
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 6px 25px var(--tog-accent-glow);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
   color: #fff;
+  z-index: 2147483646;
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+#tog-sync-banner:hover {
+  transform: translateY(-3px) scale(1.03);
+  box-shadow: 0 10px 30px var(--tog-accent-glow);
+}
+
+/* ── Playback Desync Prompt ──────────────────────────────────────────────── */
+#tog-desync-prompt {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: all;
+  background: rgba(244, 63, 94, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--tog-radius-pill);
+  padding: 8px 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 30px var(--tog-red-glow);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  z-index: 2147483646;
   transition: transform var(--tog-transition);
 }
-#tog-sync-banner:hover { transform: translateY(-2px); }
-#tog-sync-banner.hidden { display: none; }
 
-/* ── Panel ────────────────────────────────────────────────────────────────── */
-#tog-panel {
+#tog-desync-prompt:hover { transform: translateX(-50%) translateY(-2px); }
+
+/* ─── FLOATING PICTURE-IN-PICTURE (PiP) CALL WINDOW ───────────────────────── */
+#tog-pip-window {
+  position: fixed;
+  top: 70px;
+  right: 70px;
+  width: 320px;
   pointer-events: all;
-  width: var(--tog-panel-width);
   background: var(--tog-bg);
-  border: 1px solid var(--tog-border);
-  border-radius: var(--tog-radius);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(124, 58, 237, 0.15);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid var(--tog-border-light);
+  border-radius: var(--tog-radius-lg);
+  box-shadow: var(--tog-shadow-lg), var(--tog-shadow-glow);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  max-height: 520px;
-  transition: opacity var(--tog-transition), transform var(--tog-transition);
-  transform-origin: bottom right;
+  z-index: 2147483645;
+  user-select: none;
+  transition: box-shadow var(--tog-transition), opacity var(--tog-transition);
+  animation: tog-pip-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-#tog-panel.collapsed {
-  opacity: 0;
-  transform: scale(0.92);
-  pointer-events: none;
+@keyframes tog-pip-pop {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
-/* ── Webcam section ───────────────────────────────────────────────────────── */
-#tog-webcam-section {
+#tog-pip-header {
   display: flex;
-  gap: 6px;
-  padding: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
   background: var(--tog-surface);
   border-bottom: 1px solid var(--tog-border);
+  cursor: move;
+}
+
+.tog-pip-drag-handle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tog-text);
+  letter-spacing: 0.02em;
+}
+
+.tog-pip-drag-handle svg {
+  opacity: 0.6;
+}
+
+.tog-pip-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tog-pip-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--tog-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--tog-transition), color var(--tog-transition);
+}
+
+.tog-pip-icon-btn:hover {
+  background: var(--tog-surface-hover);
+  color: #fff;
+}
+
+/* ── Video Tiles ─────────────────────────────────────────────────────────── */
+#tog-webcam-section {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(10, 8, 22, 0.6);
 }
 
 .tog-video-tile {
   position: relative;
   flex: 1;
   aspect-ratio: 4/3;
-  border-radius: var(--tog-radius-sm);
+  border-radius: var(--tog-radius-md);
   overflow: hidden;
   background: var(--tog-surface-2);
   border: 1px solid var(--tog-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .tog-video-tile video {
@@ -131,14 +418,21 @@
   display: block;
 }
 
+#tog-local-video {
+  transform: scaleX(-1);
+}
+
 .tog-video-tile .tog-video-label {
   position: absolute;
-  bottom: 4px;
+  bottom: 6px;
   left: 6px;
   font-size: 10px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.85);
-  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  color: #fff;
   pointer-events: none;
 }
 
@@ -149,76 +443,248 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  background: var(--tog-surface-2);
+  gap: 6px;
+  background: linear-gradient(135deg, var(--tog-surface-2) 0%, var(--tog-surface) 100%);
   font-size: 11px;
   color: var(--tog-text-muted);
+  font-weight: 500;
 }
-.tog-cam-placeholder svg { opacity: 0.4; }
 
-/* ── Webcam controls ──────────────────────────────────────────────────────── */
-#tog-webcam-controls {
+.tog-cam-placeholder svg {
+  opacity: 0.5;
+}
+
+/* ── PiP Floating Toolbar ────────────────────────────────────────────────── */
+#tog-pip-toolbar {
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--tog-border);
+  gap: 12px;
+  padding: 10px;
   background: var(--tog-surface);
+  border-top: 1px solid var(--tog-border);
 }
 
 .tog-ctrl-btn {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 1px solid var(--tog-border);
   background: var(--tog-surface-2);
+  color: var(--tog-text);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--tog-transition), border-color var(--tog-transition);
+  transition: transform var(--tog-transition), background var(--tog-transition), border-color var(--tog-transition);
 }
-.tog-ctrl-btn:hover { background: var(--tog-border); }
-.tog-ctrl-btn.active { background: rgba(239,68,68,0.2); border-color: var(--tog-red); }
-.tog-ctrl-btn svg { width: 16px; height: 16px; stroke: var(--tog-text); }
-.tog-ctrl-btn.active svg { stroke: var(--tog-red); }
 
-/* ── Emoji reaction bar ───────────────────────────────────────────────────── */
-#tog-emoji-bar {
+.tog-ctrl-btn:hover {
+  transform: scale(1.1);
+  background: var(--tog-surface-hover);
+  border-color: var(--tog-border-light);
+}
+
+.tog-ctrl-btn:active {
+  transform: scale(0.95);
+}
+
+.tog-ctrl-btn.active {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: var(--tog-green);
+}
+
+.tog-ctrl-btn.active svg {
+  stroke: var(--tog-green);
+}
+
+.tog-ctrl-btn.muted {
+  background: rgba(244, 63, 94, 0.25);
+  border-color: var(--tog-red);
+}
+
+.tog-ctrl-btn.muted svg {
+  stroke: var(--tog-red);
+}
+
+.tog-ctrl-btn.tog-btn-endcall {
+  background: var(--tog-red);
+  border-color: var(--tog-red);
+}
+
+.tog-ctrl-btn.tog-btn-endcall:hover {
+  background: #e11d48;
+}
+
+.tog-ctrl-btn.tog-btn-endcall svg {
+.tog-ctrl-btn.tog-btn-call {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  border-color: var(--tog-green);
+}
+.tog-ctrl-btn.tog-btn-call svg {
+  stroke: #ffffff;
+}
+.tog-ctrl-btn.tog-btn-call.active {
+  background: var(--tog-red) !important;
+  border-color: var(--tog-red) !important;
+}
+
+.tog-ctrl-btn.tog-btn-ringing {
+  background: rgba(16, 185, 129, 0.35);
+  border-color: var(--tog-green);
+  animation: tog-btn-ring-pulse 1s infinite alternate;
+}
+
+@keyframes tog-btn-ring-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--tog-green-glow); }
+  100% { transform: scale(1.15); box-shadow: 0 0 15px 4px var(--tog-green-glow); }
+}
+
+/* ─── EXPANDABLE WATCH PARTY DRAWER ──────────────────────────────────────── */
+#tog-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: var(--tog-drawer-width);
+  height: 100vh;
+  pointer-events: all;
+  background: var(--tog-bg);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-left: 1px solid var(--tog-border);
+  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.7);
   display: flex;
-  justify-content: center;
-  gap: 4px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--tog-border);
+  flex-direction: column;
+  z-index: 2147483644;
+  transform: translateX(100%);
+  transition: transform var(--tog-transition);
+}
+
+#tog-drawer.open {
+  transform: translateX(0) !important;
+}
+
+#tog-drawer-video-card {
+  display: flex;
+  flex-direction: column;
   background: var(--tog-surface);
+  border-bottom: 1px solid var(--tog-border);
+  flex-shrink: 0;
 }
 
-.tog-emoji-btn {
-  font-size: 20px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  border-radius: var(--tog-radius-sm);
-  padding: 4px 6px;
-  transition: transform var(--tog-transition), background var(--tog-transition);
-  line-height: 1;
+/* ── Drawer Header ───────────────────────────────────────────────────────── */
+#tog-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  background: var(--tog-surface);
+  border-bottom: 1px solid var(--tog-border);
 }
-.tog-emoji-btn:hover {
+
+.tog-drawer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tog-brand-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #4c1d95 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px var(--tog-accent-glow);
+}
+
+.tog-brand-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: #fff;
+}
+
+.tog-brand-text h2 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--tog-text);
+  margin: 0;
+}
+
+.tog-brand-text p {
+  font-size: 11px;
+  color: var(--tog-text-muted);
+  margin: 0;
+}
+
+#tog-drawer-close {
   background: var(--tog-surface-2);
-  transform: scale(1.25);
+  border: 1px solid var(--tog-border);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--tog-text-muted);
+  transition: background var(--tog-transition), color var(--tog-transition);
 }
-.tog-emoji-btn:active { transform: scale(1.1); }
 
-/* ── Chat section ─────────────────────────────────────────────────────────── */
+#tog-drawer-close:hover {
+  background: var(--tog-surface-hover);
+  color: #fff;
+}
+
+/* ── Live Room Info Bar ──────────────────────────────────────────────────── */
+#tog-live-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  background: rgba(124, 58, 237, 0.08);
+  border-bottom: 1px solid var(--tog-border);
+  font-size: 12px;
+}
+
+.tog-room-code-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--tog-accent-light);
+  letter-spacing: 0.05em;
+}
+
+.tog-call-quick-btn {
+  background: var(--tog-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--tog-radius-pill);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: background var(--tog-transition), transform var(--tog-transition);
+}
+
+.tog-call-quick-btn:hover {
+  background: var(--tog-accent-light);
+  transform: scale(1.05);
+}
+
+/* ── Live Chat Messages ──────────────────────────────────────────────────── */
 #tog-chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-height: 100px;
-  max-height: 220px;
+  gap: 10px;
   scrollbar-width: thin;
   scrollbar-color: var(--tog-border) transparent;
 }
@@ -229,38 +695,45 @@
 .tog-msg {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  animation: tog-msg-in 0.2s ease;
+  gap: 3px;
+  animation: tog-msg-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes tog-msg-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 .tog-msg-meta {
   font-size: 10px;
+  font-weight: 600;
   color: var(--tog-text-muted);
 }
 
 .tog-msg-bubble {
   display: inline-block;
-  padding: 6px 10px;
-  border-radius: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.45;
   word-break: break-word;
-  max-width: 100%;
+  max-width: 88%;
 }
 
-.tog-msg.mine .tog-msg-meta { text-align: right; }
-.tog-msg.mine .tog-msg-bubble {
-  background: linear-gradient(135deg, var(--tog-accent), #5b21b6);
-  color: #fff;
-  border-bottom-right-radius: 3px;
+.tog-msg.mine {
   align-self: flex-end;
 }
+.tog-msg.mine .tog-msg-meta { text-align: right; }
+.tog-msg.mine .tog-msg-bubble {
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #6d28d9 100%);
+  color: #fff;
+  border-bottom-right-radius: 3px;
+  box-shadow: 0 4px 15px rgba(124, 58, 237, 0.25);
+}
 
+.tog-msg.theirs {
+  align-self: flex-start;
+}
 .tog-msg.theirs .tog-msg-bubble {
   background: var(--tog-surface-2);
   color: var(--tog-text);
@@ -268,92 +741,130 @@
   border: 1px solid var(--tog-border);
 }
 
-.tog-msg.system .tog-msg-bubble {
-  background: none;
-  color: var(--tog-text-muted);
-  font-size: 11px;
-  font-style: italic;
-  text-align: center;
+.tog-msg.system {
+  align-self: center;
   width: 100%;
-  padding: 2px 0;
+}
+.tog-msg.system .tog-msg-bubble {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--tog-text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--tog-radius-pill);
+  font-size: 11px;
+  text-align: center;
+  max-width: 100%;
+  padding: 4px 12px;
+  margin: 2px 0;
 }
 
-/* ── Chat input ───────────────────────────────────────────────────────────── */
+/* ── Emoji Reaction Tray ─────────────────────────────────────────────────── */
+#tog-emoji-bar {
+  display: flex;
+  justify-content: space-around;
+  padding: 8px 12px;
+  background: var(--tog-surface);
+  border-top: 1px solid var(--tog-border);
+}
+
+.tog-emoji-btn {
+  font-size: 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--tog-radius-sm);
+  padding: 4px 8px;
+  transition: transform var(--tog-transition), background var(--tog-transition);
+  line-height: 1;
+}
+
+.tog-emoji-btn:hover {
+  background: var(--tog-surface-hover);
+  transform: scale(1.3) translateY(-2px);
+}
+
+.tog-emoji-btn:active {
+  transform: scale(1.1);
+}
+
+/* ── Chat Input ───────────────────────────────────────────────────────────── */
 #tog-chat-input-row {
   display: flex;
-  gap: 6px;
-  padding: 8px;
-  border-top: 1px solid var(--tog-border);
+  gap: 8px;
+  padding: 12px 14px;
   background: var(--tog-surface);
+  border-top: 1px solid var(--tog-border);
 }
 
 #tog-chat-input {
   flex: 1;
   background: var(--tog-surface-2);
   border: 1px solid var(--tog-border);
-  border-radius: var(--tog-radius-sm);
-  padding: 8px 12px;
+  border-radius: var(--tog-radius-md);
+  padding: 10px 14px;
   color: var(--tog-text);
-  font-family: 'Inter', sans-serif;
+  font-family: inherit;
   font-size: 13px;
   outline: none;
   resize: none;
-  min-height: 36px;
+  min-height: 38px;
   max-height: 80px;
   line-height: 1.4;
-  transition: border-color var(--tog-transition);
+  transition: border-color var(--tog-transition), box-shadow var(--tog-transition);
 }
-#tog-chat-input:focus { border-color: var(--tog-accent); }
-#tog-chat-input::placeholder { color: var(--tog-text-muted); }
+
+#tog-chat-input:focus {
+  border-color: var(--tog-accent);
+  box-shadow: 0 0 0 3px var(--tog-accent-glow);
+}
+
+#tog-chat-input::placeholder {
+  color: var(--tog-text-muted);
+}
 
 #tog-send-btn {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   flex-shrink: 0;
-  border-radius: var(--tog-radius-sm);
-  background: var(--tog-accent);
+  border-radius: var(--tog-radius-md);
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #6d28d9 100%);
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--tog-transition), transform var(--tog-transition);
+  box-shadow: 0 4px 15px var(--tog-accent-glow);
+  transition: transform var(--tog-transition), background var(--tog-transition);
 }
-#tog-send-btn:hover { background: var(--tog-accent-light); }
-#tog-send-btn:active { transform: scale(0.94); }
-#tog-send-btn svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 2.5; }
 
-/* ── Floating emoji reactions ─────────────────────────────────────────────── */
+#tog-send-btn:hover {
+  transform: scale(1.05);
+}
+
+#tog-send-btn:active {
+  transform: scale(0.92);
+}
+
+#tog-send-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2.5;
+}
+
+/* ── Floating Emoji Particles ────────────────────────────────────────────── */
 .tog-emoji-float {
   position: fixed;
-  font-size: 32px;
+  font-size: 36px;
   pointer-events: none;
   z-index: 2147483646;
-  animation: tog-emoji-float 2.2s ease-out forwards;
+  animation: tog-emoji-float-up 2.2s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
   user-select: none;
 }
 
-@keyframes tog-emoji-float {
-  0%   { opacity: 1; transform: translateY(0)   scale(1); }
-  60%  { opacity: 1; transform: translateY(-80px) scale(1.2); }
-  100% { opacity: 0; transform: translateY(-130px) scale(0.8); }
+@keyframes tog-emoji-float-up {
+  0%   { opacity: 1; transform: translateY(0) scale(0.6) rotate(0deg); }
+  30%  { opacity: 1; transform: translateY(-70px) scale(1.3) rotate(-8deg); }
+  70%  { opacity: 0.9; transform: translateY(-160px) scale(1.1) rotate(6deg); }
+  100% { opacity: 0; transform: translateY(-240px) scale(0.7) rotate(0deg); }
 }
-
-/* ── Playback desync prompt ───────────────────────────────────────────────── */
-#tog-desync-prompt {
-  pointer-events: all;
-  background: rgba(124, 58, 237, 0.95);
-  border-radius: var(--tog-radius);
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-  cursor: pointer;
-  transition: transform var(--tog-transition);
-}
-#tog-desync-prompt:hover { transform: translateY(-2px); }
-#tog-desync-prompt.hidden { display: none; }

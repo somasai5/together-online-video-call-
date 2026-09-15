@@ -15,29 +15,55 @@
 
 const OFFSCREEN_URL = chrome.runtime.getURL('offscreen.html');
 
-// ─── Offscreen document management ───────────────────────────────────────────
+let creatingOffscreen = null;
+let offscreenCreated = false;
 
 async function ensureOffscreenDocument() {
-  // Check if already exists
-  const existing = await chrome.offscreen.hasDocument?.();
-  if (existing) return;
+  if (offscreenCreated) return;
 
-  // Also check via getContexts (more reliable in some Chrome versions)
+  if (await chrome.offscreen?.hasDocument?.()) {
+    offscreenCreated = true;
+    return;
+  }
+
   try {
-    const contexts = await chrome.runtime.getContexts({
+    const contexts = await chrome.runtime.getContexts?.({
       contextTypes: ['OFFSCREEN_DOCUMENT'],
       documentUrls: [OFFSCREEN_URL],
     });
-    if (contexts.length > 0) return;
-  } catch {
-    // getContexts may not be available in all versions; fall through
+    if (contexts && contexts.length > 0) {
+      offscreenCreated = true;
+      return;
+    }
+  } catch {}
+
+  if (creatingOffscreen) {
+    try {
+      await creatingOffscreen;
+    } catch {}
+    return;
   }
 
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_URL,
-    reasons: ['BLOBS'],
-    justification: 'Maintain persistent WebSocket connection to signaling server',
-  });
+  creatingOffscreen = (async () => {
+    try {
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ['BLOBS'],
+        justification: 'Maintain persistent WebSocket connection to signaling server',
+      });
+      offscreenCreated = true;
+    } catch (err) {
+      if (err?.message && err.message.includes('Only a single offscreen')) {
+        offscreenCreated = true;
+      } else {
+        console.warn('[Background] Offscreen init notice:', err?.message);
+      }
+    } finally {
+      creatingOffscreen = null;
+    }
+  })();
+
+  await creatingOffscreen;
 }
 
 // ─── Message routing ──────────────────────────────────────────────────────────
@@ -49,18 +75,28 @@ async function ensureOffscreenDocument() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const { source, type } = message;
 
-  // From content script → forward to offscreen
+  // From content script
   if (source === 'content_script') {
-    ensureOffscreenDocument().then(() => {
-      chrome.runtime.sendMessage({ ...message, source: 'background' }).catch(() => {});
-    });
-    // Keep channel open for async response if needed
+    if (type === 'get-room-state') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        chrome.storage.session.get(['roomCode', 'participantId', 'isHost'], (data) => {
+          if (data && data.roomCode) {
+            chrome.tabs.sendMessage(tabId, { ...data, type: 'room-state', source: 'background' }).catch(() => {});
+          }
+        });
+      }
+      return false;
+    }
+
+    // Forward to offscreen
+    chrome.runtime.sendMessage({ ...message, source: 'background' }).catch(() => {});
     return false;
   }
 
   // From offscreen → forward to active Hotstar tab content scripts
   if (source === 'offscreen') {
-    // If this is a room-state update, persist it
+    // If this is a room-state update, persist in session storage
     if (type === 'room-created' || type === 'joined' || type === 'reconnected' || type === 'room-state') {
       const roomState = {
         roomCode: message.roomCode,
@@ -68,30 +104,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         isHost: message.isHost,
       };
       chrome.storage.session.set(roomState).catch(() => {});
-      chrome.storage.local.set(roomState).catch(() => {});
+    }
+
+    if (type === 'movie-change' || type === 'state-snapshot') {
+      if (message.url) {
+        chrome.storage.session.set({
+          movieUrl: message.url,
+          movieTitle: message.title || '',
+        }).catch(() => {});
+      }
     }
 
     if (type === 'left-room') {
       chrome.storage.session.clear().catch(() => {});
-      chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected']).catch(() => {});
+      chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected', 'movieUrl', 'movieTitle']).catch(() => {});
     }
 
     // Broadcast to all Hotstar tabs
     chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
-        if (!tab.url) continue;
-        const isHotstar = tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com');
-        if (isHotstar) {
-          chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {
-            // If tab was opened before extension reloaded, auto-inject content_script.js
-            if (type === 'room-created' || type === 'joined' || type === 'reconnected') {
+        if (tab.id === undefined || tab.id < 0) continue;
+        if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) continue;
+
+        chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {
+          // If tab was opened before extension reloaded, auto-inject content_script.js
+          if (type === 'room-created' || type === 'joined' || type === 'reconnected') {
+            if (tab.url && (tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com'))) {
               chrome.scripting.executeScript({
                 target: { tabId: tab.id },
                 files: ['content_script.js'],
               }).catch(() => {});
             }
-          });
-        }
+          }
+        });
       }
     });
 
@@ -102,13 +147,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // From popup → forward to offscreen
   if (source === 'popup') {
-    ensureOffscreenDocument().then(() => {
-      chrome.runtime.sendMessage({ ...message, source: 'background' }).catch(() => {});
-    });
+    chrome.runtime.sendMessage({ ...message, source: 'background' }).catch(() => {});
     return false;
   }
 
   return false;
+});
+
+// ─── Reset stale room state on extension reload / startup ─────────────────────
+
+function resetRoomStorage() {
+  try {
+    chrome.storage.session?.clear?.().catch?.(() => {});
+  } catch {}
+  try {
+    chrome.storage.local?.remove?.(['roomCode', 'participantId', 'isHost', 'peerConnected']).catch?.(() => {});
+  } catch {}
+
+  // Broadcast to all open tabs so existing content scripts clean up immediately
+  chrome.tabs?.query?.({}, (tabs) => {
+    if (!tabs) return;
+    for (const tab of tabs) {
+      if (tab.id === undefined || tab.id < 0) continue;
+      chrome.tabs.sendMessage(tab.id, { type: 'left-room', source: 'background' }).catch(() => {});
+    }
+  });
+}
+
+// Reset immediately on background service worker reload
+resetRoomStorage();
+
+chrome.runtime.onInstalled.addListener(() => {
+  resetRoomStorage();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  resetRoomStorage();
 });
 
 // ─── Alarms keepalive (belt-and-suspenders) ───────────────────────────────────
@@ -120,11 +194,16 @@ chrome.alarms.create('keepalive', { periodInMinutes: 0.4 }); // every ~24s
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'keepalive') {
-    await ensureOffscreenDocument();
+    if (await chrome.offscreen?.hasDocument?.()) {
+      offscreenCreated = true;
+    } else {
+      offscreenCreated = false;
+      await ensureOffscreenDocument();
+    }
   }
 });
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
 // Eagerly create the offscreen document when the service worker starts
-ensureOffscreenDocument().catch(console.error);
+ensureOffscreenDocument().catch(() => {});

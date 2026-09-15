@@ -28,11 +28,16 @@ const peerItem      = document.getElementById('peer-item');
 const peerDot       = document.getElementById('peer-dot');
 const peerLabel     = document.getElementById('peer-label');
 
+const movieStatusCard = document.getElementById('movie-status-card');
+const popupMovieTitle = document.getElementById('popup-movie-title');
+const btnOpenMovie     = document.getElementById('btn-open-movie');
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let currentRoomCode = null;
 let participantId   = null;
 let isHost          = false;
 let peerConnected   = false;
+let currentMovieUrl    = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function showScreen(name) {
@@ -54,9 +59,23 @@ function sendToBackground(payload) {
   chrome.runtime.sendMessage({ ...payload, source: 'popup' }).catch(() => {});
 }
 
+function updateMovieCard(url, title) {
+  if (url) {
+    currentMovieUrl = url;
+    if (popupMovieTitle) popupMovieTitle.textContent = title || 'Hotstar Video';
+    movieStatusCard?.classList.remove('hidden');
+  } else {
+    currentMovieUrl = null;
+    movieStatusCard?.classList.add('hidden');
+  }
+}
+
 // ─── Restore persisted state on popup open ────────────────────────────────────
 function applyStoredState(data) {
-  if (!data || !data.roomCode) return;
+  if (!data || !data.roomCode) {
+    showScreen('lobby');
+    return;
+  }
   currentRoomCode = data.roomCode;
   participantId   = data.participantId;
   isHost          = data.isHost ?? false;
@@ -66,17 +85,20 @@ function applyStoredState(data) {
   myRole.textContent        = isHost ? 'Host' : 'Guest';
 
   updatePeerStatus(peerConnected);
+  if (data.movieUrl) {
+    updateMovieCard(data.movieUrl, data.movieTitle);
+  } else {
+    updateMovieCard(null);
+  }
   showScreen('room');
   setStatus('connected', 'In room');
 }
 
-chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'peerConnected'], (data) => {
+chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'peerConnected', 'movieUrl', 'movieTitle'], (data) => {
   if (data && data.roomCode) {
     applyStoredState(data);
   } else {
-    chrome.storage.local.get(['roomCode', 'participantId', 'isHost', 'peerConnected'], (localData) => {
-      applyStoredState(localData);
-    });
+    showScreen('lobby');
   }
 });
 
@@ -85,10 +107,25 @@ sendToBackground({ type: 'get-status' });
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 
+let pendingActionTimer = null;
+
+function clearActionTimer() {
+  if (pendingActionTimer) {
+    clearTimeout(pendingActionTimer);
+    pendingActionTimer = null;
+  }
+}
+
 btnCreate.addEventListener('click', () => {
   setStatus('connecting', 'Creating room…');
   btnCreate.disabled = true;
   sendToBackground({ type: 'ws-send', payload: { type: 'create' } });
+
+  clearActionTimer();
+  pendingActionTimer = setTimeout(() => {
+    btnCreate.disabled = false;
+    setJoinError('Server is waking up. Please try again in 10s.');
+  }, 12000);
 });
 
 btnJoin.addEventListener('click', () => {
@@ -105,6 +142,12 @@ btnJoin.addEventListener('click', () => {
     type: 'ws-send',
     payload: { type: 'join', roomCode: code },
   });
+
+  clearActionTimer();
+  pendingActionTimer = setTimeout(() => {
+    btnJoin.disabled = false;
+    setJoinError('Connecting took longer than expected. Please try again.');
+  }, 12000);
 });
 
 inputCode.addEventListener('input', () => {
@@ -127,14 +170,36 @@ btnCopy.addEventListener('click', () => {
   });
 });
 
+btnOpenMovie?.addEventListener('click', () => {
+  const targetUrl = currentMovieUrl || 'https://www.hotstar.com';
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const currentTab = tabs[0];
+    if (currentTab && currentTab.url && (currentTab.url.includes('hotstar.com') || currentTab.url.includes('jiohotstar.com'))) {
+      chrome.tabs.update(currentTab.id, { url: targetUrl });
+    } else {
+      chrome.tabs.query({}, (allTabs) => {
+        const hsTab = allTabs.find((t) => t.url && (t.url.includes('hotstar.com') || t.url.includes('jiohotstar.com')));
+        if (hsTab && hsTab.id) {
+          chrome.tabs.update(hsTab.id, { url: targetUrl, active: true });
+        } else {
+          chrome.tabs.create({ url: targetUrl });
+        }
+      });
+    }
+  });
+});
+
 btnLeave.addEventListener('click', () => {
+  clearActionTimer();
   sendToBackground({ type: 'ws-leave' });
   chrome.storage.session.clear();
-  chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected']);
+  chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected', 'movieUrl', 'movieTitle']);
   currentRoomCode = null;
   participantId   = null;
   isHost          = false;
   peerConnected   = false;
+  currentMovieUrl = null;
+  updateMovieCard(null);
   btnCreate.disabled = false;
   btnJoin.disabled   = false;
   inputCode.value    = '';
@@ -151,12 +216,15 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'ws-status':
       if (message.status === 'connected') {
         setStatus('connected', currentRoomCode ? 'In room' : 'Connected');
+      } else if (message.status === 'connecting') {
+        setStatus('connecting', 'Connecting to server…');
       } else {
         setStatus('disconnected', 'Disconnected');
       }
       break;
 
     case 'room-created':
+      clearActionTimer();
       currentRoomCode = message.roomCode;
       participantId   = message.participantId;
       isHost          = true;
@@ -164,7 +232,6 @@ chrome.runtime.onMessage.addListener((message) => {
 
       const hostState = { roomCode: message.roomCode, participantId, isHost: true, peerConnected: false };
       chrome.storage.session.set(hostState);
-      chrome.storage.local.set(hostState);
 
       roomCodeValue.textContent = message.roomCode;
       myRole.textContent        = 'Host';
@@ -176,13 +243,13 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case 'joined':
     case 'reconnected':
+      clearActionTimer();
       currentRoomCode = message.roomCode;
       participantId   = message.participantId;
       isHost          = message.isHost;
 
       const guestState = { roomCode: message.roomCode, participantId, isHost, peerConnected: false };
       chrome.storage.session.set(guestState);
-      chrome.storage.local.set(guestState);
 
       roomCodeValue.textContent = message.roomCode;
       myRole.textContent        = message.isHost ? 'Host' : 'Guest';
@@ -192,29 +259,46 @@ chrome.runtime.onMessage.addListener((message) => {
       btnJoin.disabled = false;
       break;
 
+    case 'movie-change':
+    case 'state-snapshot':
+      if (message.url) {
+        updateMovieCard(message.url, message.title);
+      }
+      break;
+
     case 'peer-joined':
     case 'peer-reconnected':
       peerConnected = true;
       chrome.storage.session.set({ peerConnected: true });
-      chrome.storage.local.set({ peerConnected: true });
       updatePeerStatus(true);
       break;
 
     case 'peer-disconnected':
       peerConnected = false;
       chrome.storage.session.set({ peerConnected: false });
-      chrome.storage.local.set({ peerConnected: false });
       updatePeerStatus(false);
       break;
 
     case 'you-are-host':
       isHost = true;
       chrome.storage.session.set({ isHost: true });
-      chrome.storage.local.set({ isHost: true });
       myRole.textContent = 'Host';
       break;
 
+    case 'left-room':
+      currentRoomCode = null;
+      participantId   = null;
+      isHost          = false;
+      peerConnected   = false;
+      currentMovieUrl = null;
+      updateMovieCard(null);
+      chrome.storage.session.clear();
+      showScreen('lobby');
+      setStatus('connected', 'Connected');
+      break;
+
     case 'error':
+      clearActionTimer();
       setStatus('disconnected', 'Error');
       setJoinError(message.message || 'Unknown error');
       btnCreate.disabled = false;
@@ -230,3 +314,4 @@ function updatePeerStatus(connected) {
   peerDot.className        = `dot ${connected ? 'connected' : 'disconnected'}`;
   peerLabel.textContent    = connected ? 'Friend' : 'Waiting for friend…';
 }
+

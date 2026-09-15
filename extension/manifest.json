@@ -35,6 +35,7 @@
         "*://*.jiohotstar.com/*",
         "*://jiohotstar.com/*"
       ],
+      "css": ["overlay.css"],
       "js": ["content_script.js"],
       "run_at": "document_idle",
       "all_frames": false

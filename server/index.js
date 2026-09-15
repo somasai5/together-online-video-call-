@@ -42,6 +42,9 @@ const RELAY_EVENTS = new Set([
   'call-ended',
   'state-request',
   'state-snapshot',
+  'movie-change',
+  'clock-ping',
+  'clock-pong',
 ]);
 
 // ─── In-memory state ─────────────────────────────────────────────────────────
@@ -203,7 +206,7 @@ function handleMessage(ws, rawData, participantId) {
     if (room.hostId !== participantId) return;
     const peer = getPeer(room, participantId);
     if (peer && peer.ws) {
-      send(peer.ws, { type: 'drift-heartbeat', currentTime: msg.currentTime });
+      send(peer.ws, { type: 'drift-heartbeat', ...msg });
     }
     return;
   }
@@ -245,11 +248,14 @@ function handleLeave(ws, participantId) {
 
   const peer = getPeer(room, participantId);
   if (peer && peer.ws) {
-    send(peer.ws, { type: 'peer-disconnected', participantId });
     if (room.hostId === participantId) {
-      room.hostId = peer.id;
-      send(peer.ws, { type: 'you-are-host' });
-      log('info', `[HOST-HANDOFF] Host left room ${room.code}, new host is ${peer.id}`);
+      // Host left the room — close the room for the guest so they are kicked out to lobby too
+      send(peer.ws, { type: 'left-room', reason: 'Host has left the room.' });
+      if (peer.graceTimer) clearTimeout(peer.graceTimer);
+      room.participants.delete(peer.id);
+      log('info', `[HOST-LEFT] Host left room ${room.code}, closing room for guest ${peer.id}`);
+    } else {
+      send(peer.ws, { type: 'peer-disconnected', participantId });
     }
   }
 
@@ -447,19 +453,24 @@ function handleConnection(ws, req) {
     const peer = getPeer(room, participantId);
     if (peer && peer.ws) {
       send(peer.ws, { type: 'peer-disconnected', participantId });
-
-      // Host handoff: if the host disconnected and there's a live peer, make them host
-      if (room.hostId === participantId) {
-        room.hostId = peer.id;
-        send(peer.ws, { type: 'you-are-host' });
-        log('info', `[HOST-HANDOFF] Room ${room.code}: new host is ${peer.id}`);
-      }
     }
 
     // Start grace timer — if they don't reconnect, remove their slot
     participant.graceTimer = setTimeout(() => {
+      const wasHost = room.hostId === participantId;
       room.participants.delete(participantId);
       log('info', `[GRACE-EXPIRED] Participant ${participantId} removed from room ${room.code}`);
+
+      if (wasHost) {
+        // Host did not reconnect within grace window — close the room for the guest as well
+        const remainingPeer = getPeer(room, participantId);
+        if (remainingPeer && remainingPeer.ws) {
+          send(remainingPeer.ws, { type: 'left-room', reason: 'Host disconnected.' });
+          if (remainingPeer.graceTimer) clearTimeout(remainingPeer.graceTimer);
+          room.participants.delete(remainingPeer.id);
+          log('info', `[ROOM-CLOSED] Host disconnected permanently, closing room ${room.code} for guest`);
+        }
+      }
 
       if (room.participants.size === 0) {
         scheduleRoomCleanup(room);

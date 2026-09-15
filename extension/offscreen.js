@@ -142,9 +142,14 @@ chrome.runtime.onMessage.addListener((message) => {
       sendToServer(message.payload);
       break;
     case 'get-status':
+      let currentStatus = 'disconnected';
+      if (ws) {
+        if (ws.readyState === WebSocket.OPEN) currentStatus = 'connected';
+        else if (ws.readyState === WebSocket.CONNECTING) currentStatus = 'connecting';
+      }
       toBackground({
         type: 'ws-status',
-        status: (ws && ws.readyState === WebSocket.OPEN) ? 'connected' : 'disconnected'
+        status: currentStatus,
       });
       break;
     default:

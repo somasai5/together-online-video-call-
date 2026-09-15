@@ -14,52 +14,88 @@
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-/** STUN + TURN config — replace TURN credentials with your own (e.g. metered.ca) */
+/** Public STUN servers for reliable P2P WebRTC NAT traversal */
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  // ↓ Add your TURN credentials here
-  // {
-  //   urls: 'turn:YOUR_TURN_SERVER:3478',
-  //   username: 'YOUR_USERNAME',
-  //   credential: 'YOUR_CREDENTIAL',
-  // },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
 ];
 
-const DRIFT_HEARTBEAT_INTERVAL_MS = 7_000;
-const DRIFT_HARD_SEEK_THRESHOLD   = 3;    // seconds — beyond this: hard seek
-const DRIFT_NUDGE_THRESHOLD       = 0.8;  // seconds — within this: ignore
+const DRIFT_HEARTBEAT_INTERVAL_MS = 200;    // 200ms ultra-high frequency heartbeat (5x per second)
+const DRIFT_HARD_SEEK_THRESHOLD   = 0.12;   // 120ms — snap seek if drift exceeds ~1/8th second
+const DRIFT_NUDGE_THRESHOLD       = 0.012;  // 12ms — sub-frame tolerance (< 1 video frame at 60fps)
 
 const EMOJIS = ['❤️', '😂', '😮', '👏', '🔥', '😢'];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let roomCode      = null;
-let participantId = null;
-let isHost        = false;
-let isInRoom      = false;
+let roomCode         = null;
+let participantId    = null;
+let isHost           = false;
+let isInRoom         = false;
 
-let videoEl       = null;
-let isSyncing     = false;       // guard against feedback loops
-let syncEnabled   = true;        // enabled by default
-let isInAdBreak   = false;       // don't sync during ads
+let videoEl          = null;
+let isSyncing        = false;       // guard against feedback loops
+let syncEnabled      = true;        // enabled by default
+let isInAdBreak      = false;       // don't sync during ads
+let hostPlaybackRate = 1.0;         // sync movie speed (1x, 1.25x, etc.)
 
-let driftInterval = null;
+let driftInterval    = null;
+let clockSyncInterval = null;
+let clockOffsetMs    = 0;          // Host clock offset (NTP measured)
+let clockSyncSamples = [];
 
-let pc            = null;        // RTCPeerConnection
-let localStream   = null;
-let remoteStream  = null;
+let lastBroadcastUrl = null;
+let pendingMovieUrl  = null;
 
-let overlayRoot   = null;        // #together-overlay-root
-let panelVisible  = true;
+let pc               = null;        // RTCPeerConnection
+let localStream      = null;
+let remoteStream     = null;
+let pendingOffer     = null;        // offer waiting for user interaction/answer
 
-// Video observer
-let videoObserver = null;
+let overlayRoot      = null;        // #together-overlay-root
+let panelVisible     = true;
+
+// Video and ad observers
+let videoObserver    = null;
+let adObserver       = null;
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
+function cleanupOrphanedScript() {
+  try {
+    if (videoObserver) {
+      videoObserver.disconnect();
+      videoObserver = null;
+    }
+    if (window._togVideoCheckInterval) {
+      clearInterval(window._togVideoCheckInterval);
+      window._togVideoCheckInterval = null;
+    }
+    if (driftInterval) {
+      clearInterval(driftInterval);
+      driftInterval = null;
+    }
+    if (clockSyncInterval) {
+      clearInterval(clockSyncInterval);
+      clockSyncInterval = null;
+    }
+  } catch {}
+}
+
 function sendToBackground(payload) {
-  chrome.runtime.sendMessage({ ...payload, source: 'content_script' }).catch(() => {});
+  try {
+    if (!chrome.runtime?.id) {
+      cleanupOrphanedScript();
+      return;
+    }
+    chrome.runtime.sendMessage({ ...payload, source: 'content_script' })?.catch(() => {});
+  } catch (err) {
+    cleanupOrphanedScript();
+  }
 }
 
 function sendWS(payload) {
@@ -89,8 +125,12 @@ function injectOverlay() {
   document.body.appendChild(overlayRoot);
 
   attachOverlayListeners();
-  log('Overlay injected');
+  makePipDraggable();
+  log('Overlay injected with PiP and Drawer layout');
 }
+
+let drawerOpen = true;
+let unreadCount = 0;
 
 function buildOverlayHTML() {
   const emojiButtons = EMOJIS.map(
@@ -98,122 +138,261 @@ function buildOverlayHTML() {
   ).join('');
 
   return `
-    <!-- Sync enable banner (guest only, shown before first interaction) -->
+    <!-- Top-Center Movie Switch Notification Banner -->
+    <div id="tog-movie-banner" class="hidden">
+      <span id="tog-movie-text">🎬 Host is watching a different movie</span>
+      <div class="tog-movie-banner-btns">
+        <button class="tog-btn-switch" id="tog-switch-movie-btn">Switch Movie</button>
+        <button class="tog-btn-dismiss" id="tog-dismiss-movie-btn" title="Dismiss">✕</button>
+      </div>
+    </div>
+
+    <!-- Top-Right Incoming Call Banner -->
+    <div id="tog-call-banner" class="hidden">
+      <span>📞 Friend is calling you...</span>
+      <div class="tog-call-banner-btns">
+        <button class="tog-action-btn tog-btn-answer" id="tog-answer-call-btn">Answer</button>
+        <button class="tog-action-btn tog-btn-decline" id="tog-decline-call-btn">Decline</button>
+      </div>
+    </div>
+
+    <!-- Autoplay Sync Enable Banner -->
     <div id="tog-sync-banner" class="hidden">
       ▶ Join &amp; Enable Sync
     </div>
 
-    <!-- Desync prompt (shown when autoplay is blocked) -->
+    <!-- Desync Resume Prompt -->
     <div id="tog-desync-prompt" class="hidden">
       ▶ Playback out of sync — click to resume
     </div>
 
-    <!-- Main panel -->
-    <div id="tog-panel">
+    <!-- ── Watch Party Drawer (Open by Default) ── -->
+    <div id="tog-drawer" class="open">
+      <div id="tog-drawer-header">
+        <div class="tog-drawer-brand">
+          <div class="tog-brand-icon">
+            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="tog-brand-text">
+            <h2>Together</h2>
+            <p>Watch Party</p>
+          </div>
+        </div>
+        <button id="tog-drawer-close" title="Minimize Drawer">✕</button>
+      </div>
 
-      <!-- Webcam section -->
-      <div id="tog-webcam-section">
-        <div class="tog-video-tile" id="tog-local-tile">
-          <video id="tog-local-video" autoplay muted playsinline></video>
-          <div class="tog-cam-placeholder" id="tog-local-placeholder">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <div id="tog-live-info-bar">
+        <div class="tog-room-code-tag">
+          <span>Room:</span>
+          <strong id="tog-drawer-room-code">${escapeHTML(roomCode || '———')}</strong>
+        </div>
+      </div>
+
+      <!-- ── Live Video Call Section ── -->
+      <div id="tog-drawer-video-card">
+        <div id="tog-webcam-section">
+          <div class="tog-video-tile" id="tog-local-tile">
+            <video id="tog-local-video" autoplay muted playsinline></video>
+            <div class="tog-cam-placeholder" id="tog-local-placeholder">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+              <span>Camera off</span>
+            </div>
+            <span class="tog-video-label">You</span>
+          </div>
+          <div class="tog-video-tile" id="tog-remote-tile">
+            <video id="tog-remote-video" autoplay playsinline></video>
+            <div class="tog-cam-placeholder" id="tog-remote-placeholder">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span>Friend</span>
+            </div>
+            <span class="tog-video-label">Friend</span>
+          </div>
+        </div>
+
+        <div id="tog-pip-toolbar">
+          <button class="tog-ctrl-btn" id="tog-mute-btn" title="Mute / Unmute Microphone">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>
+          <button class="tog-ctrl-btn" id="tog-cam-btn" title="Toggle Camera On / Off">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
             </svg>
-            <span>Camera off</span>
-          </div>
-          <span class="tog-video-label">You</span>
-        </div>
-        <div class="tog-video-tile" id="tog-remote-tile">
-          <video id="tog-remote-video" autoplay playsinline></video>
-          <div class="tog-cam-placeholder" id="tog-remote-placeholder">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </button>
+          <button class="tog-ctrl-btn tog-btn-call" id="tog-call-btn" title="Start Video Call">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.49 12 19.79 19.79 0 0 1 1.45 3.4 2 2 0 0 1 3.42 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.4a16 16 0 0 0 5.69 5.69l.84-.84a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
             </svg>
-            <span>Friend</span>
-          </div>
-          <span class="tog-video-label">Friend</span>
+          </button>
         </div>
       </div>
 
-      <!-- Webcam controls -->
-      <div id="tog-webcam-controls">
-        <button class="tog-ctrl-btn" id="tog-mute-btn" title="Mute mic">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="23"/>
-            <line x1="8" y1="23" x2="16" y2="23"/>
-          </svg>
-        </button>
-        <button class="tog-ctrl-btn" id="tog-cam-btn" title="Toggle camera">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M23 7l-7 5 7 5V7z"/>
-            <rect x="1" y="5" width="15" height="14" rx="2"/>
-          </svg>
-        </button>
-        <button class="tog-ctrl-btn" id="tog-call-btn" title="Start / end call">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.49 12 19.79 19.79 0 0 1 1.45 3.4 2 2 0 0 1 3.42 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.4a16 16 0 0 0 5.69 5.69l.84-.84a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Emoji bar -->
-      <div id="tog-emoji-bar">${emojiButtons}</div>
-
-      <!-- Chat messages -->
+      <!-- ── Live Chat Area ── -->
       <div id="tog-chat-messages" role="log" aria-live="polite"></div>
 
-      <!-- Chat input -->
+      <!-- ── Emoji Bar ── -->
+      <div id="tog-emoji-bar">${emojiButtons}</div>
+
+      <!-- ── Chat Input Row ── -->
       <div id="tog-chat-input-row">
-        <textarea
-          id="tog-chat-input"
-          placeholder="Type a message…"
-          rows="1"
-          maxlength="500"
-        ></textarea>
+        <textarea id="tog-chat-input" placeholder="Type a message…" rows="1" maxlength="500"></textarea>
         <button id="tog-send-btn" title="Send message">
           <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
     </div>
 
-    <!-- Toggle button -->
-    <button id="tog-toggle-btn" title="Toggle Together panel">
+    <!-- ── Floating Action Button (Toggle Drawer) ── -->
+    <button id="tog-toggle-btn" title="Toggle Watch Party Drawer">
+      <span id="tog-unread-badge" class="hidden">0</span>
       <svg viewBox="0 0 24 24">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-        <circle cx="9" cy="7" r="4"/>
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
     </button>
   `;
 }
 
+function makePipDraggable() {
+  const pip = document.getElementById('tog-pip-window');
+  const header = document.getElementById('tog-pip-header');
+  if (!pip || !header) return;
+
+  let isDragging = false;
+  let startX = 0, startY = 0;
+  let initialLeft = 0, initialTop = 0;
+
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.tog-pip-icon-btn')) return;
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = pip.getBoundingClientRect();
+    initialLeft = rect.left;
+    initialTop = rect.top;
+
+    pip.style.right = 'auto';
+    pip.style.bottom = 'auto';
+    pip.style.left = `${initialLeft}px`;
+    pip.style.top = `${initialTop}px`;
+    pip.style.transition = 'none';
+
+    const onMouseMove = (ev) => {
+      if (!isDragging) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+
+      let newLeft = initialLeft + dx;
+      let newTop = initialTop + dy;
+
+      // Clamping within viewport
+      const maxLeft = window.innerWidth - pip.offsetWidth - 10;
+      const maxTop = window.innerHeight - pip.offsetHeight - 10;
+      newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+      newTop = Math.max(10, Math.min(newTop, maxTop));
+
+      pip.style.left = `${newLeft}px`;
+      pip.style.top = `${newTop}px`;
+    };
+
+    const onMouseUp = () => {
+      isDragging = false;
+      pip.style.transition = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
 function attachOverlayListeners() {
-  // Toggle panel
-  document.getElementById('tog-toggle-btn').addEventListener('click', () => {
-    panelVisible = !panelVisible;
-    document.getElementById('tog-panel').classList.toggle('collapsed', !panelVisible);
+  const drawer = document.getElementById('tog-drawer');
+  const toggleBtn = document.getElementById('tog-toggle-btn');
+  const closeBtn = document.getElementById('tog-drawer-close');
+  const badge = document.getElementById('tog-unread-badge');
+
+  function openDrawer() {
+    drawerOpen = true;
+    drawer?.classList.add('open');
+    unreadCount = 0;
+    if (badge) {
+      badge.textContent = '0';
+      badge.classList.add('hidden');
+    }
+  }
+
+  function closeDrawer() {
+    drawerOpen = false;
+    drawer?.classList.remove('open');
+  }
+
+  // Toggle drawer
+  toggleBtn?.addEventListener('click', () => {
+    if (drawerOpen) closeDrawer();
+    else openDrawer();
+  });
+
+  closeBtn?.addEventListener('click', closeDrawer);
+
+  // Close on Escape key
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drawerOpen) {
+      closeDrawer();
+    }
+  });
+
+  // Movie switch banner buttons
+  document.getElementById('tog-switch-movie-btn')?.addEventListener('click', () => {
+    if (pendingMovieUrl) {
+      log('Switching to host movie:', pendingMovieUrl);
+      window.location.href = pendingMovieUrl;
+    }
+  });
+  document.getElementById('tog-dismiss-movie-btn')?.addEventListener('click', () => {
+    document.getElementById('tog-movie-banner')?.classList.add('hidden');
   });
 
   // Sync banner (guest interaction to satisfy autoplay policy)
-  document.getElementById('tog-sync-banner').addEventListener('click', () => {
+  document.getElementById('tog-sync-banner')?.addEventListener('click', () => {
     syncEnabled = true;
-    document.getElementById('tog-sync-banner').classList.add('hidden');
+    document.getElementById('tog-sync-banner')?.classList.add('hidden');
+    if (!isHost) {
+      sendWS({ type: 'state-request' });
+    }
     log('Sync enabled by user interaction');
   });
 
   // Desync prompt
-  document.getElementById('tog-desync-prompt').addEventListener('click', () => {
-    document.getElementById('tog-desync-prompt').classList.add('hidden');
+  document.getElementById('tog-desync-prompt')?.addEventListener('click', () => {
+    document.getElementById('tog-desync-prompt')?.classList.add('hidden');
     if (videoEl) {
       videoEl.play().catch(() => {});
     }
   });
 
+  // Incoming call banner buttons
+  document.getElementById('tog-answer-call-btn')?.addEventListener('click', async () => {
+    document.getElementById('tog-call-banner')?.classList.add('hidden');
+    document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
+    if (pendingOffer) {
+      await answerCall(pendingOffer);
+    }
+  });
+  document.getElementById('tog-decline-call-btn')?.addEventListener('click', () => {
+    document.getElementById('tog-call-banner')?.classList.add('hidden');
+    document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
+    pendingOffer = null;
+    sendWS({ type: 'call-ended' });
+    appendChatMessage('Declined video call.', 'system');
+  });
+
   // Emoji buttons
-  document.getElementById('tog-emoji-bar').addEventListener('click', (e) => {
+  document.getElementById('tog-emoji-bar')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.tog-emoji-btn');
     if (!btn) return;
     const emoji = btn.dataset.emoji;
@@ -222,22 +401,209 @@ function attachOverlayListeners() {
   });
 
   // Chat send
-  document.getElementById('tog-send-btn').addEventListener('click', sendChatMessage);
-  document.getElementById('tog-chat-input').addEventListener('keydown', (e) => {
+  const chatInput = document.getElementById('tog-chat-input');
+  document.getElementById('tog-send-btn')?.addEventListener('click', sendChatMessage);
+  chatInput?.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // prevent Hotstar video controls from stealing hotkeys (e.g. Space)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendChatMessage();
     }
   });
+  chatInput?.addEventListener('input', () => {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
+  });
+  chatInput?.addEventListener('keyup', (e) => e.stopPropagation());
+  chatInput?.addEventListener('keypress', (e) => e.stopPropagation());
+
+  // Stop hotkey propagation on the whole overlay to prevent accidental movie pause/seek
+  overlayRoot?.addEventListener('keydown', (e) => e.stopPropagation());
 
   // WebRTC controls
-  document.getElementById('tog-call-btn').addEventListener('click', handleCallToggle);
-  document.getElementById('tog-mute-btn').addEventListener('click', handleMuteToggle);
-  document.getElementById('tog-cam-btn').addEventListener('click', handleCamToggle);
+  document.getElementById('tog-call-btn')?.addEventListener('click', handleCallToggle);
+  document.getElementById('tog-drawer-call-btn')?.addEventListener('click', handleCallToggle);
+  document.getElementById('tog-mute-btn')?.addEventListener('click', handleMuteToggle);
+  document.getElementById('tog-cam-btn')?.addEventListener('click', handleCamToggle);
+
+  // Minimize PiP window toggle
+  document.getElementById('tog-pip-minimize-btn')?.addEventListener('click', () => {
+    const sec = document.getElementById('tog-webcam-section');
+    if (sec) {
+      const isHidden = sec.style.display === 'none';
+      sec.style.display = isHidden ? 'flex' : 'none';
+    }
+  });
 
   // Fullscreen change — reparent overlay
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+}
+
+// ─── Movie / URL sync helpers ────────────────────────────────────────────────
+
+// ─── Movie / URL sync helpers ────────────────────────────────────────────────
+
+let lastKnownHostUrl = null;
+let lastKnownHostTitle = null;
+
+function getTitleFromUrl(u) {
+  try {
+    const parsed = new URL(u, window.location.origin);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const idx = segments.findIndex((s) => s === 'movies' || s === 'shows' || s === 'clips');
+    if (idx !== -1 && segments[idx + 1]) {
+      return segments[idx + 1].replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+  } catch {}
+  return null;
+}
+
+function getMovieTitle() {
+  const titleSelectors = [
+    '[data-testid="player-title"]',
+    '[data-testid*="title"]',
+    'h1',
+    'h2',
+    '.player-title',
+    '.tray-title',
+    '.movie-title',
+    '.watch-title',
+  ];
+  for (const sel of titleSelectors) {
+    const el = document.querySelector(sel);
+    if (el && el.textContent.trim()) {
+      const text = el.textContent.trim();
+      if (text.length > 1 && text.length < 80) return text;
+    }
+  }
+
+  const docTitle = document.title
+    .replace(/\s*[-|•–]\s*(Disney\+?\s*)?Hotstar.*$/i, '')
+    .replace(/^Watch\s+/i, '')
+    .trim();
+
+  if (docTitle && docTitle.length > 1) return docTitle;
+
+  return getTitleFromUrl(window.location.href) || 'this movie';
+}
+
+function normalizeUrl(u) {
+  if (!u) return '';
+  try {
+    const parsed = new URL(u, window.location.origin);
+    let path = parsed.pathname.replace(/\/+$/, '').toLowerCase();
+    path = path.replace(/\/watch$/, '');
+    return path;
+  } catch {
+    return String(u).trim().toLowerCase();
+  }
+}
+
+function escapeHTML(str) {
+  return String(str).replace(/[&<>'"]/g, (tag) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  }[tag] || tag));
+}
+
+function broadcastMovieUrlIfNeeded(force = false) {
+  if (!isHost || !isInRoom) return;
+  const currentUrl = window.location.href;
+  if (force || currentUrl !== lastBroadcastUrl) {
+    lastBroadcastUrl = currentUrl;
+    const title = getMovieTitle();
+    sendWS({
+      type: 'movie-change',
+      url: currentUrl,
+      title: title,
+      sentAt: Date.now(),
+    });
+    log('Broadcasted movie URL to guest:', currentUrl, title);
+  }
+}
+
+function handleIncomingMovieUrl(targetUrl, targetTitle) {
+  if (isHost || !targetUrl) return;
+  const isNewUrl = !lastKnownHostUrl || normalizeUrl(lastKnownHostUrl) !== normalizeUrl(targetUrl);
+  lastKnownHostUrl = targetUrl;
+  if (targetTitle) lastKnownHostTitle = targetTitle;
+
+  if (isNewUrl && targetTitle) {
+    appendChatMessage(`🎬 Host switched to: ${targetTitle}`, 'system');
+  }
+
+  checkMovieUrlMatch();
+}
+
+function checkMovieUrlMatch() {
+  if (isHost || !lastKnownHostUrl || !isInRoom) return;
+
+  if (!overlayRoot) {
+    injectOverlay();
+  }
+
+  const currentNorm = normalizeUrl(window.location.href);
+  const targetNorm  = normalizeUrl(lastKnownHostUrl);
+
+  const banner = document.getElementById('tog-movie-banner');
+  const textEl = document.getElementById('tog-movie-text');
+
+  if (currentNorm !== targetNorm) {
+    pendingMovieUrl = lastKnownHostUrl;
+    const title = lastKnownHostTitle || getTitleFromUrl(lastKnownHostUrl) || 'Host\'s movie';
+    if (textEl) {
+      textEl.innerHTML = `🎬 Host is watching: <strong>${escapeHTML(title)}</strong>`;
+    }
+    if (banner) {
+      banner.classList.remove('hidden');
+    }
+    log('Host is on different movie. Guest:', currentNorm, 'Host:', targetNorm);
+  } else {
+    // Both on same movie!
+    if (banner) {
+      banner.classList.add('hidden');
+    }
+    pendingMovieUrl = null;
+  }
+}
+
+function hookSpaNavigation() {
+  if (window._togSpaHooked) return;
+  window._togSpaHooked = true;
+
+  const origPushState = history.pushState;
+  if (typeof origPushState === 'function') {
+    history.pushState = function (...args) {
+      const res = origPushState.apply(this, args);
+      setTimeout(onUrlOrNavChange, 50);
+      return res;
+    };
+  }
+
+  const origReplaceState = history.replaceState;
+  if (typeof origReplaceState === 'function') {
+    history.replaceState = function (...args) {
+      const res = origReplaceState.apply(this, args);
+      setTimeout(onUrlOrNavChange, 50);
+      return res;
+    };
+  }
+
+  window.addEventListener('popstate', onUrlOrNavChange);
+  window.addEventListener('hashchange', onUrlOrNavChange);
+}
+
+function onUrlOrNavChange() {
+  if (!isInRoom) return;
+  if (isHost) {
+    broadcastMovieUrlIfNeeded(true);
+  } else {
+    checkMovieUrlMatch();
+  }
 }
 
 function findMainVideo() {
@@ -264,8 +630,19 @@ function findMainVideo() {
 
 function startVideoObserver() {
   if (videoObserver) videoObserver.disconnect();
+  hookSpaNavigation();
 
   function tryAttach() {
+    if (!chrome.runtime?.id) {
+      cleanupOrphanedScript();
+      return;
+    }
+    if (isHost) {
+      broadcastMovieUrlIfNeeded();
+    } else {
+      checkMovieUrlMatch();
+    }
+
     const v = findMainVideo();
     if (v && v !== videoEl) {
       videoEl = v;
@@ -280,7 +657,7 @@ function startVideoObserver() {
   videoObserver.observe(document.body, { childList: true, subtree: true });
 
   if (!window._togVideoCheckInterval) {
-    window._togVideoCheckInterval = setInterval(tryAttach, 2000);
+    window._togVideoCheckInterval = setInterval(tryAttach, 1000);
   }
 }
 
@@ -288,83 +665,277 @@ function attachVideoListeners(v) {
   if (v._togListenersAttached) return;
   v._togListenersAttached = true;
 
-  v.addEventListener('play',   onVideoPlay);
-  v.addEventListener('pause',  onVideoPause);
-  v.addEventListener('seeked', onVideoSeeked);
-  log('Hooked play/pause/seeked event listeners to main video');
+  v.addEventListener('play',       onVideoPlay);
+  v.addEventListener('pause',      onVideoPause);
+  v.addEventListener('seeking',    onVideoSeeking);
+  v.addEventListener('seeked',     onVideoSeeked);
+  v.addEventListener('ratechange', onVideoRateChange);
+  log('Hooked play/pause/seeking/seeked/ratechange listeners to main video');
 }
 
 // ─── Playback sync — host side ────────────────────────────────────────────────
 
 function onVideoPlay() {
   if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
-  sendWS({ type: 'sync', action: 'play', currentTime: videoEl.currentTime });
+  sendWS({
+    type: 'sync',
+    action: 'play',
+    currentTime: videoEl.currentTime,
+    rate: videoEl.playbackRate,
+    url: window.location.href,
+    title: getMovieTitle(),
+    sentAt: Date.now(),
+  });
 }
 
 function onVideoPause() {
   if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
-  sendWS({ type: 'sync', action: 'pause', currentTime: videoEl.currentTime });
+  sendWS({
+    type: 'sync',
+    action: 'pause',
+    currentTime: videoEl.currentTime,
+    rate: videoEl.playbackRate,
+    url: window.location.href,
+    title: getMovieTitle(),
+    sentAt: Date.now(),
+  });
+}
+
+function onVideoSeeking() {
+  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  sendWS({
+    type: 'sync',
+    action: 'seek',
+    currentTime: videoEl.currentTime,
+    rate: videoEl.playbackRate,
+    url: window.location.href,
+    title: getMovieTitle(),
+    sentAt: Date.now(),
+  });
 }
 
 function onVideoSeeked() {
   if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
-  sendWS({ type: 'sync', action: 'seek', currentTime: videoEl.currentTime });
+  sendWS({
+    type: 'sync',
+    action: 'seek',
+    currentTime: videoEl.currentTime,
+    rate: videoEl.playbackRate,
+    url: window.location.href,
+    title: getMovieTitle(),
+    sentAt: Date.now(),
+  });
 }
 
-// ─── Playback sync — guest side ───────────────────────────────────────────────
+function onVideoRateChange() {
+  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  sendWS({
+    type: 'sync',
+    action: 'ratechange',
+    rate: videoEl.playbackRate,
+    currentTime: videoEl.currentTime,
+    url: window.location.href,
+    title: getMovieTitle(),
+    sentAt: Date.now(),
+  });
+}
 
-function applySync(action, currentTime) {
+// ─── Clock Skew & Network Latency Calibration (NTP Algorithm) ─────────────────
+
+function startClockSync() {
+  if (isHost || !isInRoom) return;
+  clearInterval(clockSyncInterval);
+  clockSyncInterval = setInterval(() => {
+    if (!isInRoom || isHost || !chrome.runtime?.id) return;
+    sendWS({
+      type: 'clock-ping',
+      t0: Date.now(),
+    });
+  }, 2000);
+
+  // Initial immediate burst of 3 pings for instant clock calibration
+  sendWS({ type: 'clock-ping', t0: Date.now() });
+  setTimeout(() => sendWS({ type: 'clock-ping', t0: Date.now() }), 300);
+  setTimeout(() => sendWS({ type: 'clock-ping', t0: Date.now() }), 600);
+}
+
+function handleClockPing(message) {
+  if (!isHost) return;
+  sendWS({
+    type: 'clock-pong',
+    t0: message.t0,
+    t1: Date.now(),
+  });
+}
+
+function handleClockPong(message) {
+  if (isHost) return;
+  const t3 = Date.now();
+  const t0 = message.t0;
+  const t1 = message.t1;
+  if (!t0 || !t1) return;
+
+  const rtt = Math.max(t3 - t0, 0);
+  const offset = t1 - (t0 + rtt / 2);
+
+  clockSyncSamples.push(offset);
+  if (clockSyncSamples.length > 7) clockSyncSamples.shift();
+
+  // Median filtering to eliminate random network latency jitter
+  const sorted = [...clockSyncSamples].sort((a, b) => a - b);
+  clockOffsetMs = sorted[Math.floor(sorted.length / 2)];
+}
+
+function getCorrectedHostTime(hostTime, sentAt, hostPaused, hostRate) {
+  const baseRate = (typeof hostRate === 'number' && hostRate > 0) ? hostRate : (hostPlaybackRate || 1.0);
+  if (!sentAt) return hostTime;
+
+  const now = Date.now();
+  // Time elapsed in Host's clock domain since host dispatched the event
+  const hostNowEstimate = now + clockOffsetMs;
+  const elapsedSeconds = Math.max((hostNowEstimate - sentAt) / 1000, 0);
+
+  // If paused, host position didn't advance; if playing, advance by exact elapsed seconds * playback speed
+  return hostPaused ? hostTime : (hostTime + (elapsedSeconds * baseRate));
+}
+
+// ─── Playback sync — guest side (ultra-low latency) ──────────────────────────
+
+function applySync(action, currentTime, sentAt, rate) {
   if (!videoEl || isInAdBreak) return;
+
+  if (typeof rate === 'number' && rate > 0) {
+    hostPlaybackRate = rate;
+  }
+  const baseRate = hostPlaybackRate || 1.0;
+  const targetTime = getCorrectedHostTime(currentTime, sentAt, action === 'pause', baseRate);
 
   isSyncing = true;
   try {
-    videoEl.currentTime = currentTime;
+    if (Math.abs(videoEl.currentTime - targetTime) > 0.015) {
+      videoEl.currentTime = targetTime;
+    }
+
     if (action === 'play') {
-      const p = videoEl.play();
-      if (p && typeof p.catch === 'function') {
-        p.catch(() => {
-          // Autoplay blocked — show prompt
-          document.getElementById('tog-desync-prompt').classList.remove('hidden');
+      if (videoEl.playbackRate !== baseRate) {
+        videoEl.playbackRate = baseRate;
+      }
+      const playPromise = videoEl.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          log('Guest autoplay prevented:', err.message);
+          document.getElementById('tog-desync-prompt')?.classList.remove('hidden');
         });
       }
-    } else if (action === 'pause' || action === 'seek') {
+    } else if (action === 'pause') {
       if (!videoEl.paused) videoEl.pause();
+      videoEl.currentTime = targetTime;
+    } else if (action === 'seek' || action === 'ratechange') {
+      if (videoEl.playbackRate !== baseRate) {
+        videoEl.playbackRate = baseRate;
+      }
     }
   } finally {
-    // Release guard after a tick so our own triggered events don't re-broadcast
-    setTimeout(() => { isSyncing = false; }, 100);
+    setTimeout(() => { isSyncing = false; }, 40);
   }
 }
 
-// ─── Drift correction (host heartbeat → guest nudge) ─────────────────────────
+// ─── Frame-accurate drift correction (host heartbeat → guest PID nudge) ─────
 
 function startDriftHeartbeat() {
   if (!isHost) return;
   clearInterval(driftInterval);
   driftInterval = setInterval(() => {
+    if (!chrome.runtime?.id) {
+      cleanupOrphanedScript();
+      return;
+    }
+    broadcastMovieUrlIfNeeded();
     if (!videoEl || isInAdBreak) return;
-    sendWS({ type: 'drift-heartbeat', currentTime: videoEl.currentTime });
+    sendWS({
+      type: 'drift-heartbeat',
+      currentTime: videoEl.currentTime,
+      paused: videoEl.paused,
+      rate: videoEl.playbackRate,
+      url: window.location.href,
+      title: getMovieTitle(),
+      sentAt: Date.now(),
+    });
   }, DRIFT_HEARTBEAT_INTERVAL_MS);
 }
 
-function applyDriftCorrection(hostTime) {
-  if (!videoEl || isHost || isInAdBreak) return;
+function stopDriftHeartbeat() {
+  if (driftInterval) {
+    clearInterval(driftInterval);
+    driftInterval = null;
+  }
+}
 
-  const diff = Math.abs(videoEl.currentTime - hostTime);
+function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
+  if (!videoEl || isHost || isInAdBreak || isSyncing) return;
 
-  if (diff < DRIFT_NUDGE_THRESHOLD) return; // within tolerance
+  if (typeof hostRate === 'number' && hostRate > 0) {
+    hostPlaybackRate = hostRate;
+  }
+  const baseRate = hostPlaybackRate || 1.0;
+  const correctedHostTime = getCorrectedHostTime(hostTime, sentAt, hostPaused, baseRate);
 
+  // 1. Correct paused/playing state if mismatched
+  if (typeof hostPaused === 'boolean') {
+    if (hostPaused && !videoEl.paused) {
+      isSyncing = true;
+      videoEl.pause();
+      videoEl.currentTime = correctedHostTime;
+      setTimeout(() => { isSyncing = false; }, 40);
+      return;
+    } else if (!hostPaused && videoEl.paused && syncEnabled) {
+      isSyncing = true;
+      videoEl.currentTime = correctedHostTime;
+      videoEl.playbackRate = baseRate;
+      videoEl.play().catch(() => {});
+      setTimeout(() => { isSyncing = false; }, 40);
+      return;
+    }
+  }
+
+  // If host is paused, snap exactly to host position
+  if (hostPaused && videoEl.paused) {
+    if (Math.abs(videoEl.currentTime - correctedHostTime) > 0.010) {
+      videoEl.currentTime = correctedHostTime;
+    }
+    return;
+  }
+
+  const diff = Math.abs(videoEl.currentTime - correctedHostTime);
+
+  // Sub-frame tolerance (< 12ms / ~0.7 frame at 60fps) — considered in perfect frame-lock
+  if (diff < DRIFT_NUDGE_THRESHOLD) {
+    if (videoEl.playbackRate !== baseRate) {
+      videoEl.playbackRate = baseRate;
+    }
+    return;
+  }
+
+  // Hard seek (if drift > 120ms) — instant sub-second snap seek
   if (diff > DRIFT_HARD_SEEK_THRESHOLD) {
-    // Large drift — hard seek
     isSyncing = true;
-    videoEl.currentTime = hostTime;
-    setTimeout(() => { isSyncing = false; }, 100);
-    log(`Drift correction (hard seek): Δ${diff.toFixed(2)}s`);
+    videoEl.currentTime = correctedHostTime;
+    if (videoEl.playbackRate !== baseRate) videoEl.playbackRate = baseRate;
+    setTimeout(() => { isSyncing = false; }, 40);
+    log(`Frame-accurate lock (hard seek): Δ${diff.toFixed(3)}s`);
   } else {
-    // Small drift — subtle rate nudge
-    videoEl.playbackRate = hostTime > videoEl.currentTime ? 1.05 : 0.95;
-    setTimeout(() => { videoEl.playbackRate = 1.0; }, 2500);
-    log(`Drift correction (rate nudge): Δ${diff.toFixed(2)}s`);
+    // Proportional Micro-nudge (12ms - 120ms):
+    // Smoothly speed up or slow down by 1-6% to close the gap seamlessly
+    const isLagging = correctedHostTime > videoEl.currentTime;
+    const rateDelta = Math.min(diff * 0.9, 0.06); // micro adjustment without pitch distortion
+    const targetRate = isLagging ? (baseRate + rateDelta) : Math.max(baseRate - rateDelta, 0.85);
+
+    videoEl.playbackRate = targetRate;
+
+    clearTimeout(videoEl._togNudgeTimeout);
+    videoEl._togNudgeTimeout = setTimeout(() => {
+      if (videoEl && !isSyncing) videoEl.playbackRate = baseRate;
+    }, 180);
   }
 }
 
@@ -392,16 +963,26 @@ function startAdDetection() {
             type: 'sync',
             action: videoEl.paused ? 'pause' : 'play',
             currentTime: videoEl.currentTime,
+            sentAt: Date.now(),
           });
         }, 1000);
       }
     }
   }
 
+  if (adObserver) adObserver.disconnect();
   // Watch for class changes on body subtree
-  const adObserver = new MutationObserver(checkAdState);
+  adObserver = new MutationObserver(checkAdState);
   adObserver.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class', 'data-testid'] });
   checkAdState();
+}
+
+function stopAdDetection() {
+  if (adObserver) {
+    adObserver.disconnect();
+    adObserver = null;
+  }
+  isInAdBreak = false;
 }
 
 // ─── Text chat ────────────────────────────────────────────────────────────────
@@ -439,6 +1020,16 @@ function appendChatMessage(text, who, sender) {
 
   // Auto-scroll to bottom
   container.scrollTop = container.scrollHeight;
+
+  // If chat message from peer arrived while drawer is closed, increment unread badge
+  if (!drawerOpen && who !== 'mine' && who !== 'system') {
+    unreadCount++;
+    const badge = document.getElementById('tog-unread-badge');
+    if (badge) {
+      badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+      badge.classList.remove('hidden');
+    }
+  }
 }
 
 // ─── Emoji reactions ──────────────────────────────────────────────────────────
@@ -463,7 +1054,16 @@ function spawnEmojiFloat(emoji) {
 let pendingIceCandidates = [];
 
 async function handleCallToggle() {
-  if (pc) {
+  if (pendingOffer) {
+    document.getElementById('tog-call-banner')?.classList.add('hidden');
+    document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
+    await answerCall(pendingOffer);
+    return;
+  }
+
+  if (pc && pc.connectionState === 'connected') {
+    endCall(true);
+  } else if (pc) {
     endCall(true);
   } else {
     await startCall();
@@ -471,6 +1071,9 @@ async function handleCallToggle() {
 }
 
 async function getLocalMediaStream() {
+  if (localStream && localStream.getTracks().some((t) => t.readyState === 'live')) {
+    return localStream;
+  }
   try {
     return await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
@@ -499,14 +1102,32 @@ async function setupPeerConnection() {
   }
 
   pc.addEventListener('track', (e) => {
-    log('Remote track received:', e.track.kind);
-    remoteStream = e.streams[0] || new MediaStream([e.track]);
+    log('Remote track received:', e.track.kind, e.track.id);
+    if (e.streams && e.streams[0]) {
+      remoteStream = e.streams[0];
+    } else {
+      if (!remoteStream) remoteStream = new MediaStream();
+      if (!remoteStream.getTracks().some((t) => t.id === e.track.id)) {
+        remoteStream.addTrack(e.track);
+      }
+    }
     showRemoteStream(remoteStream);
+
+    e.track.onunmute = () => {
+      log('Remote track unmuted:', e.track.kind);
+      showRemoteStream(remoteStream);
+    };
   });
 
   pc.addEventListener('icecandidate', (e) => {
     if (e.candidate) {
-      sendWS({ type: 'ice-candidate', candidate: e.candidate });
+      const cand = e.candidate.toJSON ? e.candidate.toJSON() : {
+        candidate: e.candidate.candidate,
+        sdpMid: e.candidate.sdpMid,
+        sdpMLineIndex: e.candidate.sdpMLineIndex,
+        usernameFragment: e.candidate.usernameFragment,
+      };
+      sendWS({ type: 'ice-candidate', candidate: cand });
     }
   });
 
@@ -515,6 +1136,7 @@ async function setupPeerConnection() {
     if (pc.connectionState === 'connected') {
       appendChatMessage('Video call connected!', 'system');
       document.getElementById('tog-call-btn')?.classList.add('active');
+      document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
     } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
       appendChatMessage('Video call disconnected.', 'system');
       document.getElementById('tog-call-btn')?.classList.remove('active');
@@ -539,11 +1161,19 @@ async function startCall() {
   await setupPeerConnection();
 
   try {
-    const offer = await pc.createOffer();
+    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     await pc.setLocalDescription(offer);
-    sendWS({ type: 'offer', sdp: pc.localDescription });
+    sendWS({
+      type: 'offer',
+      sdp: { type: offer.type, sdp: offer.sdp },
+    });
     log('Offer sent');
     appendChatMessage('Calling friend...', 'system');
+    const callBtn = document.getElementById('tog-call-btn');
+    if (callBtn) {
+      callBtn.classList.add('active');
+      callBtn.setAttribute('title', 'End Video Call');
+    }
   } catch (err) {
     log('Failed to create offer:', err);
   }
@@ -560,11 +1190,19 @@ function endCall(notifyPeer = true) {
   }
   remoteStream = null;
   pendingIceCandidates = [];
+  pendingOffer = null;
   showLocalStream(null);
   showRemoteStream(null);
-  document.getElementById('tog-call-btn')?.classList.remove('active');
+
+  const callBtn = document.getElementById('tog-call-btn');
+  if (callBtn) {
+    callBtn.classList.remove('active');
+    callBtn.classList.remove('tog-btn-ringing');
+    callBtn.setAttribute('title', 'Start Video Call');
+  }
   document.getElementById('tog-cam-btn')?.classList.remove('active');
   document.getElementById('tog-mute-btn')?.classList.remove('active');
+  document.getElementById('tog-call-banner')?.classList.add('hidden');
   log('Call ended');
 
   if (notifyPeer) {
@@ -577,8 +1215,10 @@ function showLocalStream(stream) {
   const placeholder = document.getElementById('tog-local-placeholder');
   if (!video) return;
 
-  if (stream) {
-    video.srcObject = stream;
+  if (stream && stream.getTracks().length > 0) {
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
     video.muted = true;
     video.play().catch(() => {});
     if (placeholder) placeholder.style.display = 'none';
@@ -595,11 +1235,28 @@ function showRemoteStream(stream) {
   const placeholder = document.getElementById('tog-remote-placeholder');
   if (!video) return;
 
-  if (stream) {
-    video.srcObject = stream;
-    video.play().catch(() => {});
+  if (stream && stream.getTracks().length > 0) {
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
     if (placeholder) placeholder.style.display = 'none';
     video.style.display = 'block';
+
+    const p = video.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch((err) => {
+        log('Remote video autoplay blocked, muting to display video:', err);
+        video.muted = true;
+        video.play().catch(() => {});
+        const unmute = () => {
+          video.muted = false;
+          document.removeEventListener('click', unmute);
+          document.removeEventListener('keydown', unmute);
+        };
+        document.addEventListener('click', unmute, { once: true });
+        document.addEventListener('keydown', unmute, { once: true });
+      });
+    }
   } else {
     video.srcObject = null;
     if (placeholder) placeholder.style.display = '';
@@ -615,7 +1272,7 @@ function handleMuteToggle() {
   if (!track) return;
 
   track.enabled = !track.enabled;
-  document.getElementById('tog-mute-btn').classList.toggle('active', !track.enabled);
+  document.getElementById('tog-mute-btn').classList.toggle('muted', !track.enabled);
 }
 
 function handleCamToggle() {
@@ -624,7 +1281,7 @@ function handleCamToggle() {
   if (!track) return;
 
   track.enabled = !track.enabled;
-  document.getElementById('tog-cam-btn').classList.toggle('active', !track.enabled);
+  document.getElementById('tog-cam-btn').classList.toggle('muted', !track.enabled);
 
   const placeholder = document.getElementById('tog-local-placeholder');
   const video       = document.getElementById('tog-local-video');
@@ -670,6 +1327,9 @@ chrome.runtime.onMessage.addListener((message) => {
       isInRoom      = true;
 
       injectOverlay();
+      const drawerRoomEl = document.getElementById('tog-drawer-room-code');
+      if (drawerRoomEl) drawerRoomEl.textContent = roomCode || '———';
+
       startVideoObserver();
       startAdDetection();
 
@@ -677,6 +1337,8 @@ chrome.runtime.onMessage.addListener((message) => {
         startDriftHeartbeat();
         appendChatMessage('Room created. Share the code!', 'system');
       } else {
+        startClockSync();
+        sendWS({ type: 'state-request' });
         appendChatMessage('Joined room! Ready to watch together.', 'system');
       }
 
@@ -687,12 +1349,19 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case 'you-are-host':
       isHost = true;
+      if (clockSyncInterval) {
+        clearInterval(clockSyncInterval);
+        clockSyncInterval = null;
+      }
       startDriftHeartbeat();
       appendChatMessage('You are now the host.', 'system');
       break;
 
     case 'peer-joined':
       appendChatMessage('Friend joined the room!', 'system');
+      if (isHost) {
+        broadcastMovieUrlIfNeeded(true);
+      }
       break;
 
     case 'peer-reconnected':
@@ -708,22 +1377,37 @@ chrome.runtime.onMessage.addListener((message) => {
       roomCode = null;
       participantId = null;
       isHost = false;
+      stopDriftHeartbeat();
+      stopAdDetection();
+      if (clockSyncInterval) {
+        clearInterval(clockSyncInterval);
+        clockSyncInterval = null;
+      }
       if (overlayRoot) {
         overlayRoot.remove();
         overlayRoot = null;
       }
+      const syncBanner = document.getElementById('tog-sync-banner');
+      if (syncBanner) syncBanner.remove();
+      const movieBanner = document.getElementById('tog-movie-banner');
+      if (movieBanner) movieBanner.remove();
       endCall(false);
       log('Left room');
       break;
 
     // ── Server asks us to send state snapshot (for reconnected guest) ──────
     case 'send-state-snapshot':
-      if (isHost && videoEl) {
+      if (isHost) {
         sendWS({
           type: 'state-snapshot',
-          currentTime: videoEl.currentTime,
-          paused: videoEl.paused,
+          currentTime: videoEl ? videoEl.currentTime : 0,
+          paused: videoEl ? videoEl.paused : true,
+          rate: videoEl ? videoEl.playbackRate : 1.0,
+          url: window.location.href,
+          title: getMovieTitle(),
+          sentAt: Date.now(),
         });
+        log('Host dispatched state snapshot to guest:', window.location.href);
       }
       break;
 
@@ -732,24 +1416,42 @@ chrome.runtime.onMessage.addListener((message) => {
       sendWS({ type: 'state-request' });
       break;
 
-    // ── Incoming state snapshot (for guest on reconnect) ───────────────────
+    // ── Movie change broadcast from host ──────────────────────────────────
+    case 'movie-change':
+      if (!isHost && message.url) {
+        handleIncomingMovieUrl(message.url, message.title);
+      }
+      break;
+
+    // ── Incoming state snapshot (for guest on join/reconnect) ──────────────
     case 'state-snapshot':
       if (!isHost) {
-        applySync(message.paused ? 'pause' : 'play', message.currentTime);
+        if (message.url) {
+          handleIncomingMovieUrl(message.url, message.title);
+        }
+        applySync(message.paused ? 'pause' : 'play', message.currentTime, message.sentAt, message.rate);
       }
       break;
 
     // ── Playback sync ───────────────────────────────────────────────────────
     case 'sync':
       if (isHost) break; // server already validated, but double-guard
+      if (message.url) {
+        handleIncomingMovieUrl(message.url, message.title);
+      }
       if (!syncEnabled) break;
-      applySync(message.action, message.currentTime);
+      applySync(message.action, message.currentTime, message.sentAt, message.rate);
       break;
 
     // ── Drift heartbeat ─────────────────────────────────────────────────────
     case 'drift-heartbeat':
-      if (!isHost && syncEnabled) {
-        applyDriftCorrection(message.currentTime);
+      if (!isHost) {
+        if (message.url) {
+          handleIncomingMovieUrl(message.url, message.title);
+        }
+        if (syncEnabled) {
+          applyDriftCorrection(message.currentTime, message.sentAt, message.paused, message.rate);
+        }
       }
       break;
 
@@ -780,41 +1482,93 @@ chrome.runtime.onMessage.addListener((message) => {
       endCall(false);
       appendChatMessage('Video call ended by friend.', 'system');
       break;
+
+    // ── Clock Synchronization ────────────────────────────────────────────────
+    case 'clock-ping':
+      handleClockPing(message);
+      break;
+
+    case 'clock-pong':
+      handleClockPong(message);
+      break;
   }
 });
 
 // ─── WebRTC signaling handlers ────────────────────────────────────────────────
 
 async function handleIncomingOffer(message) {
-  log('Received offer — answering call');
-  if (!localStream) {
-    try {
-      localStream = await getLocalMediaStream();
-      showLocalStream(localStream);
-    } catch (err) {
-      log('Could not get local stream on incoming call:', err);
+  log('Received incoming call offer');
+
+  // Handle glare collision (both clicked call around the same time)
+  if (pc && pc.signalingState !== 'stable') {
+    if (isHost) {
+      log('Glare detected: Host is impolite peer, ignoring guest offer');
+      return;
     }
+    log('Glare detected: Guest is polite peer, rolling back local offer to accept host offer');
+    try {
+      await pc.setLocalDescription({ type: 'rollback' });
+    } catch (e) {
+      log('Rollback error:', e);
+    }
+  }
+
+  pendingOffer = message;
+
+  // If local stream is already active (user turned on cam / clicked call), auto-answer immediately
+  if (localStream && localStream.getTracks().some((t) => t.readyState === 'live')) {
+    await answerCall(message);
+  } else {
+    document.getElementById('tog-call-banner')?.classList.remove('hidden');
+    document.getElementById('tog-call-btn')?.classList.add('tog-btn-ringing');
+    appendChatMessage('📞 Friend is calling you... Click "Answer" or the Call button to connect video.', 'system');
+  }
+}
+
+async function answerCall(offerMessage) {
+  pendingOffer = null;
+  document.getElementById('tog-call-banner')?.classList.add('hidden');
+  document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
+  log('Answering video call...');
+
+  try {
+    localStream = await getLocalMediaStream();
+    showLocalStream(localStream);
+  } catch (err) {
+    log('Could not get local stream on answer call:', err);
+    appendChatMessage('Could not access camera/mic: ' + (err.message || 'Permission denied'), 'system');
   }
 
   await setupPeerConnection();
 
   try {
-    await pc.setRemoteDescription(new RTCSessionDescription(message.sdp));
+    const sdpObj = offerMessage.sdp?.sdp ? offerMessage.sdp : { type: offerMessage.sdp?.type || 'offer', sdp: offerMessage.sdp?.sdp || offerMessage.sdp };
+    await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
     await flushIceCandidates();
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    sendWS({ type: 'answer', sdp: pc.localDescription });
+    sendWS({
+      type: 'answer',
+      sdp: { type: answer.type, sdp: answer.sdp },
+    });
     log('Answer sent');
-    appendChatMessage('Answering video call...', 'system');
+    appendChatMessage('Connected to video call.', 'system');
+    const callBtn = document.getElementById('tog-call-btn');
+    if (callBtn) {
+      callBtn.classList.add('active');
+      callBtn.setAttribute('title', 'End Video Call');
+    }
   } catch (err) {
     log('Handle offer failed:', err);
+    appendChatMessage('Failed to answer call.', 'system');
   }
 }
 
 async function handleIncomingAnswer(message) {
   if (!pc) return;
   try {
-    await pc.setRemoteDescription(new RTCSessionDescription(message.sdp));
+    const sdpObj = message.sdp?.sdp ? message.sdp : { type: message.sdp?.type || 'answer', sdp: message.sdp?.sdp || message.sdp };
+    await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
     await flushIceCandidates();
     log('Answer received, remote description set');
   } catch (err) {
@@ -824,7 +1578,7 @@ async function handleIncomingAnswer(message) {
 
 async function handleIncomingIce(message) {
   if (!message.candidate) return;
-  if (!pc || !pc.remoteDescription) {
+  if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
     pendingIceCandidates.push(message.candidate);
     return;
   }
@@ -836,7 +1590,7 @@ async function handleIncomingIce(message) {
 }
 
 async function flushIceCandidates() {
-  if (!pc || !pc.remoteDescription) return;
+  if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) return;
   while (pendingIceCandidates.length > 0) {
     const candidate = pendingIceCandidates.shift();
     try {
@@ -857,11 +1611,20 @@ function initRoom(data) {
   isInRoom      = true;
 
   injectOverlay();
+  const drawerRoomEl = document.getElementById('tog-drawer-room-code');
+  if (drawerRoomEl) drawerRoomEl.textContent = roomCode || '———';
+
   startVideoObserver();
   startAdDetection();
 
   if (isHost) {
     startDriftHeartbeat();
+    broadcastMovieUrlIfNeeded();
+  } else {
+    startClockSync();
+    if (data.movieUrl) {
+      handleIncomingMovieUrl(data.movieUrl, data.movieTitle);
+    }
   }
 
   // Ask for fresh state from host
@@ -872,15 +1635,13 @@ function initRoom(data) {
 // Start watching for video elements immediately on page load
 startVideoObserver();
 
-// Restore state if already in a room (e.g. page reload or navigation)
-chrome.storage.session.get(['roomCode', 'participantId', 'isHost'], (data) => {
-  if (data && data.roomCode) {
-    initRoom(data);
-  } else {
-    chrome.storage.local.get(['roomCode', 'participantId', 'isHost'], (locData) => {
-      if (locData && locData.roomCode) {
-        initRoom(locData);
+// Restore state if already in a room (e.g. page reload or navigation within active session)
+try {
+  if (chrome.runtime?.id && chrome.storage?.session) {
+    chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'movieUrl', 'movieTitle'], (data) => {
+      if (chrome.runtime?.id && data && data.roomCode) {
+        initRoom(data);
       }
     });
   }
-});
+} catch {}
