@@ -1,17 +1,17 @@
-/* ── Together Overlay CSS — Modern Glassmorphic PiP & Drawer Layout ───────────────
+/* ── Together Overlay CSS — Modern Glassmorphic Floating PiP & Pop-up Layout ──
    Loaded as a web_accessible_resource and injected by content_script.js.
    ──────────────────────────────────────────────────────────────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-/* ── Custom Properties ────────────────────────────────────────────────────── */
+/* ── Custom Design Tokens ─────────────────────────────────────────────────── */
 #together-overlay-root {
-  --tog-bg: rgba(13, 10, 28, 0.95);
+  --tog-bg: rgba(13, 10, 28, 0.90);
   --tog-surface: rgba(24, 20, 48, 0.92);
   --tog-surface-2: rgba(36, 31, 66, 0.95);
-  --tog-surface-hover: rgba(50, 44, 88, 0.95);
-  --tog-border: rgba(68, 58, 115, 0.6);
-  --tog-border-light: rgba(124, 58, 237, 0.4);
+  --tog-surface-hover: rgba(56, 48, 96, 0.95);
+  --tog-border: rgba(88, 76, 140, 0.45);
+  --tog-border-light: rgba(139, 92, 246, 0.4);
   --tog-accent: #7c3aed;
   --tog-accent-light: #a78bfa;
   --tog-accent-glow: rgba(124, 58, 237, 0.45);
@@ -22,17 +22,16 @@
   --tog-red: #f43f5e;
   --tog-red-glow: rgba(244, 63, 94, 0.4);
   --tog-amber: #f59e0b;
-  --tog-radius-lg: 18px;
-  --tog-radius-md: 12px;
-  --tog-radius-sm: 8px;
+  --tog-radius-lg: 16px;
+  --tog-radius-md: 10px;
+  --tog-radius-sm: 6px;
   --tog-radius-pill: 9999px;
-  --tog-shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--tog-border);
+  --tog-shadow-lg: 0 16px 45px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--tog-border);
   --tog-shadow-glow: 0 0 25px var(--tog-accent-glow);
   --tog-transition: 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  --tog-drawer-width: 330px;
 
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--tog-text);
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
@@ -51,23 +50,23 @@
   display: none !important;
 }
 
-/* ── Floating Action Button (FAB Toggle) ──────────────────────────────────── */
+/* ── Floating Action Button (FAB / Docked Bubble) ─────────────────────────── */
 #tog-toggle-btn {
   position: fixed;
   bottom: 24px;
   right: 24px;
   pointer-events: all;
-  width: 52px;
-  height: 52px;
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--tog-accent) 0%, #4c1d95 100%);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 8px 30px var(--tog-accent-glow), 0 2px 10px rgba(0, 0, 0, 0.5);
-  transition: transform var(--tog-transition), box-shadow var(--tog-transition), background var(--tog-transition);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
   z-index: 2147483646;
 }
 
@@ -81,23 +80,24 @@
 }
 
 #tog-toggle-btn svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   fill: #ffffff;
-  transition: transform var(--tog-transition);
 }
 
-#tog-unread-badge {
+#tog-unread-badge,
+#tog-chat-unread-badge {
   position: absolute;
   top: -3px;
   right: -3px;
   background: var(--tog-red);
   color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -118,15 +118,15 @@
   left: 50%;
   transform: translateX(-50%);
   pointer-events: all;
-  background: rgba(18, 14, 40, 0.92);
+  background: rgba(18, 14, 40, 0.94);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--tog-accent-light);
   border-radius: var(--tog-radius-pill);
-  padding: 8px 16px 8px 20px;
+  padding: 7px 14px 7px 18px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), var(--tog-shadow-glow);
   z-index: 2147483646;
   animation: tog-banner-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
@@ -138,10 +138,10 @@
 }
 
 #tog-movie-text {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: #fff;
-  max-width: 280px;
+  max-width: 260px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -155,7 +155,7 @@
 .tog-movie-banner-btns {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tog-btn-switch {
@@ -163,8 +163,8 @@
   color: #fff;
   border: none;
   border-radius: var(--tog-radius-pill);
-  padding: 6px 14px;
-  font-size: 12px;
+  padding: 5px 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 2px 10px var(--tog-green-glow);
@@ -181,9 +181,9 @@
   color: var(--tog-text-muted);
   border: none;
   border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -208,12 +208,12 @@
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--tog-amber);
   border-radius: var(--tog-radius-pill);
-  padding: 8px 22px;
+  padding: 8px 20px;
   display: flex;
   align-items: center;
   gap: 10px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(245, 158, 11, 0.4);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #fef08a;
   z-index: 2147483646;
@@ -231,10 +231,10 @@
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--tog-radius-md);
-  padding: 12px 18px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   box-shadow: 0 10px 35px var(--tog-green-glow);
   z-index: 2147483646;
   animation: tog-call-shake 2s infinite ease-in-out;
@@ -246,7 +246,7 @@
 }
 
 #tog-call-banner span {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #ffffff;
 }
@@ -254,15 +254,15 @@
 .tog-call-banner-btns {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tog-action-btn {
   border: none;
   border-radius: var(--tog-radius-sm);
-  padding: 6px 14px;
+  padding: 5px 12px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
   transition: transform var(--tog-transition), background var(--tog-transition);
 }
@@ -297,13 +297,13 @@
   background: linear-gradient(135deg, var(--tog-accent) 0%, #5b21b6 100%);
   border: 1px solid var(--tog-accent-light);
   border-radius: var(--tog-radius-pill);
-  padding: 10px 18px;
+  padding: 8px 16px;
   display: flex;
   align-items: center;
   gap: 8px;
   box-shadow: 0 6px 25px var(--tog-accent-glow);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #fff;
   z-index: 2147483646;
@@ -311,7 +311,7 @@
 }
 
 #tog-sync-banner:hover {
-  transform: translateY(-3px) scale(1.03);
+  transform: translateY(-2px) scale(1.03);
   box-shadow: 0 10px 30px var(--tog-accent-glow);
 }
 
@@ -326,7 +326,7 @@
   backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--tog-radius-pill);
-  padding: 8px 18px;
+  padding: 7px 16px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -341,12 +341,12 @@
 
 #tog-desync-prompt:hover { transform: translateX(-50%) translateY(-2px); }
 
-/* ─── FLOATING PICTURE-IN-PICTURE (PiP) CALL WINDOW ───────────────────────── */
+/* ─── FLOATING PICTURE-IN-PICTURE (PiP) COMPACT WIDGET ───────────────────── */
 #tog-pip-window {
   position: fixed;
-  top: 70px;
-  right: 70px;
-  width: 320px;
+  bottom: 24px;
+  right: 24px;
+  width: 290px;
   pointer-events: all;
   background: var(--tog-bg);
   backdrop-filter: blur(28px);
@@ -356,7 +356,7 @@
   box-shadow: var(--tog-shadow-lg), var(--tog-shadow-glow);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   z-index: 2147483645;
   user-select: none;
   transition: box-shadow var(--tog-transition), opacity var(--tog-transition);
@@ -364,24 +364,31 @@
 }
 
 @keyframes tog-pip-pop {
-  from { opacity: 0; transform: scale(0.85); }
-  to   { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.9) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+/* ── PiP Header / Drag Handle ────────────────────────────────────────────── */
 #tog-pip-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 9px 12px;
   background: var(--tog-surface);
+  border-top-left-radius: var(--tog-radius-lg);
+  border-top-right-radius: var(--tog-radius-lg);
   border-bottom: 1px solid var(--tog-border);
-  cursor: move;
+  cursor: grab;
+}
+
+#tog-pip-header:active {
+  cursor: grabbing;
 }
 
 .tog-pip-drag-handle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 12px;
   font-weight: 700;
   color: var(--tog-text);
@@ -392,19 +399,38 @@
   opacity: 0.6;
 }
 
+.tog-pip-logo-text {
+  font-weight: 800;
+  background: linear-gradient(135deg, #fff 0%, var(--tog-accent-light) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.tog-pip-room-pill {
+  background: rgba(124, 58, 237, 0.18);
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  border-radius: var(--tog-radius-pill);
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--tog-accent-light);
+  letter-spacing: 0.04em;
+}
+
 .tog-pip-window-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .tog-pip-icon-btn {
+  position: relative;
   background: transparent;
   border: none;
   color: var(--tog-text-muted);
   cursor: pointer;
   padding: 4px;
-  border-radius: 4px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -416,12 +442,69 @@
   color: #fff;
 }
 
+.tog-pip-icon-btn.active {
+  background: rgba(124, 58, 237, 0.25);
+  color: var(--tog-accent-light);
+}
+
+/* ── Now Watching Compact Movie Bar ───────────────────────────────────────── */
+#tog-pip-movie-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(20, 16, 42, 0.95);
+  border-bottom: 1px solid var(--tog-border);
+  font-size: 11px;
+}
+
+#tog-pip-movie-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.tog-pip-movie-title {
+  color: var(--tog-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tog-pip-movie-title strong {
+  color: #fff;
+  font-weight: 700;
+}
+
+.tog-pip-switch-btn {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--tog-radius-sm);
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--tog-green-glow);
+  flex-shrink: 0;
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+.tog-pip-switch-btn:hover {
+  transform: scale(1.05);
+}
+
 /* ── Video Tiles ─────────────────────────────────────────────────────────── */
 #tog-webcam-section {
   display: flex;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px 10px;
   background: rgba(10, 8, 22, 0.6);
+  transition: all var(--tog-transition);
 }
 
 .tog-video-tile {
@@ -448,13 +531,13 @@
 
 .tog-video-tile .tog-video-label {
   position: absolute;
-  bottom: 6px;
-  left: 6px;
-  font-size: 10px;
+  bottom: 4px;
+  left: 5px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
   color: #fff;
   pointer-events: none;
@@ -467,9 +550,9 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   background: linear-gradient(135deg, var(--tog-surface-2) 0%, var(--tog-surface) 100%);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--tog-text-muted);
   font-weight: 500;
 }
@@ -478,20 +561,25 @@
   opacity: 0.5;
 }
 
-/* ── PiP Floating Toolbar ────────────────────────────────────────────────── */
+/* ── PiP Toolbar ─────────────────────────────────────────────────────────── */
 #tog-pip-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 10px;
+  justify-content: space-between;
+  padding: 7px 10px;
   background: var(--tog-surface);
   border-top: 1px solid var(--tog-border);
 }
 
+.tog-pip-media-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .tog-ctrl-btn {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 1px solid var(--tog-border);
   background: var(--tog-surface-2);
@@ -531,26 +619,15 @@
   stroke: var(--tog-red);
 }
 
-.tog-ctrl-btn.tog-btn-endcall {
-  background: var(--tog-red);
-  border-color: var(--tog-red);
-}
-
-.tog-ctrl-btn.tog-btn-endcall:hover {
-  background: #e11d48;
-}
-
-.tog-ctrl-btn.tog-btn-endcall svg {
-  stroke: #ffffff;
-}
-
 .tog-ctrl-btn.tog-btn-call {
   background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
   border-color: var(--tog-green);
 }
+
 .tog-ctrl-btn.tog-btn-call svg {
   stroke: #ffffff;
 }
+
 .tog-ctrl-btn.tog-btn-call.active {
   background: var(--tog-red) !important;
   border-color: var(--tog-red) !important;
@@ -567,251 +644,91 @@
   100% { transform: scale(1.15); box-shadow: 0 0 15px 4px var(--tog-green-glow); }
 }
 
-/* ─── EXPANDABLE WATCH PARTY DRAWER ──────────────────────────────────────── */
-#tog-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: var(--tog-drawer-width);
-  height: 100vh;
-  pointer-events: all;
-  background: var(--tog-bg);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  border-left: 1px solid var(--tog-border);
-  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.7);
-  display: flex;
-  flex-direction: column;
-  z-index: 2147483644;
-  transform: translateX(100%);
-  transition: transform var(--tog-transition);
-}
-
-#tog-drawer.open {
-  transform: translateX(0) !important;
-}
-
-#tog-drawer-video-card {
-  display: flex;
-  flex-direction: column;
-  background: var(--tog-surface);
-  border-bottom: 1px solid var(--tog-border);
-  flex-shrink: 0;
-}
-
-/* ── Drawer Header ───────────────────────────────────────────────────────── */
-#tog-drawer-header {
+/* ── Emoji Buttons in PiP Toolbar ────────────────────────────────────────── */
+.tog-pip-emoji-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 18px;
-  background: var(--tog-surface);
-  border-bottom: 1px solid var(--tog-border);
+  gap: 2px;
 }
 
-.tog-drawer-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.tog-brand-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--tog-accent) 0%, #4c1d95 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 10px var(--tog-accent-glow);
-}
-
-.tog-brand-icon svg {
-  width: 16px;
-  height: 16px;
-  fill: #fff;
-}
-
-.tog-brand-text h2 {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--tog-text);
-  margin: 0;
-}
-
-.tog-brand-text p {
-  font-size: 11px;
-  color: var(--tog-text-muted);
-  margin: 0;
-}
-
-#tog-drawer-close {
-  background: var(--tog-surface-2);
-  border: 1px solid var(--tog-border);
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  color: var(--tog-text-muted);
-  transition: background var(--tog-transition), color var(--tog-transition);
-}
-
-#tog-drawer-close:hover {
-  background: var(--tog-surface-hover);
-  color: #fff;
-}
-
-/* ── Live Room Info Bar ──────────────────────────────────────────────────── */
-#tog-live-info-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 18px;
-  background: rgba(124, 58, 237, 0.08);
-  border-bottom: 1px solid var(--tog-border);
-  font-size: 12px;
-}
-
-.tog-room-code-tag {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  color: var(--tog-accent-light);
-  letter-spacing: 0.05em;
-}
-
-/* ── Now Watching Drawer Card ────────────────────────────────────────────── */
-#tog-drawer-movie-card {
-  padding: 12px 16px;
-  background: rgba(20, 16, 42, 0.95);
-  border-bottom: 1px solid var(--tog-border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tog-drawer-movie-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.tog-movie-badge {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--tog-accent-light);
-  text-transform: uppercase;
-}
-
-.tog-drawer-movie-title {
-  font-size: 13px;
-  color: var(--tog-text);
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.tog-drawer-movie-title strong {
-  color: #fff;
-  font-weight: 700;
-}
-
-.tog-drawer-switch-btn {
-  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
-  color: #ffffff;
+.tog-emoji-btn {
+  font-size: 16px;
+  background: none;
   border: none;
+  cursor: pointer;
   border-radius: var(--tog-radius-sm);
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 4px 14px var(--tog-green-glow);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
-  animation: tog-pulse-glow 1.5s infinite alternate;
+  padding: 3px 4px;
+  line-height: 1;
+  transition: transform var(--tog-transition), background var(--tog-transition);
 }
 
-@keyframes tog-pulse-glow {
-  0% { box-shadow: 0 2px 8px var(--tog-green-glow); transform: scale(1); }
-  100% { box-shadow: 0 4px 18px rgba(16, 185, 129, 0.7); transform: scale(1.02); }
+.tog-emoji-btn:hover {
+  background: var(--tog-surface-hover);
+  transform: scale(1.25) translateY(-2px);
 }
 
-.tog-drawer-switch-btn:hover {
-  transform: scale(1.04);
+.tog-emoji-btn:active {
+  transform: scale(1.1);
 }
 
-.tog-drawer-switch-btn.hidden {
-  display: none !important;
-}
-
-.tog-call-quick-btn {
-  background: var(--tog-accent);
-  color: #fff;
-  border: none;
-  border-radius: var(--tog-radius-pill);
-  padding: 4px 12px;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  transition: background var(--tog-transition), transform var(--tog-transition);
-}
-
-.tog-call-quick-btn:hover {
-  background: var(--tog-accent-light);
-  transform: scale(1.05);
-}
-
-/* ── Live Chat Messages ──────────────────────────────────────────────────── */
-#tog-chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px 16px;
+/* ── Pop-up Expandable Chat Drawer ────────────────────────────────────────── */
+#tog-chat-popover {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  background: rgba(14, 11, 30, 0.98);
+  border-top: 1px solid var(--tog-border);
+  border-bottom-left-radius: var(--tog-radius-lg);
+  border-bottom-right-radius: var(--tog-radius-lg);
+  overflow: hidden;
+  max-height: 220px;
+  animation: tog-popover-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tog-popover-in {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 220px; }
+}
+
+#tog-chat-messages {
+  height: 130px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   scrollbar-width: thin;
   scrollbar-color: var(--tog-border) transparent;
 }
 
-#tog-chat-messages::-webkit-scrollbar { width: 4px; }
+#tog-chat-messages::-webkit-scrollbar { width: 3px; }
 #tog-chat-messages::-webkit-scrollbar-thumb { background: var(--tog-border); border-radius: 2px; }
 
 .tog-msg {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  animation: tog-msg-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  gap: 2px;
+  animation: tog-msg-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes tog-msg-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 .tog-msg-meta {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--tog-text-muted);
 }
 
 .tog-msg-bubble {
   display: inline-block;
-  padding: 8px 12px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.45;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
   word-break: break-word;
-  max-width: 88%;
+  max-width: 90%;
 }
 
 .tog-msg.mine {
@@ -821,8 +738,8 @@
 .tog-msg.mine .tog-msg-bubble {
   background: linear-gradient(135deg, var(--tog-accent) 0%, #6d28d9 100%);
   color: #fff;
-  border-bottom-right-radius: 3px;
-  box-shadow: 0 4px 15px rgba(124, 58, 237, 0.25);
+  border-bottom-right-radius: 2px;
+  box-shadow: 0 2px 10px rgba(124, 58, 237, 0.25);
 }
 
 .tog-msg.theirs {
@@ -831,7 +748,7 @@
 .tog-msg.theirs .tog-msg-bubble {
   background: var(--tog-surface-2);
   color: var(--tog-text);
-  border-bottom-left-radius: 3px;
+  border-bottom-left-radius: 2px;
   border: 1px solid var(--tog-border);
 }
 
@@ -844,47 +761,18 @@
   color: var(--tog-text-muted);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--tog-radius-pill);
-  font-size: 11px;
+  font-size: 10px;
   text-align: center;
   max-width: 100%;
-  padding: 4px 12px;
-  margin: 2px 0;
+  padding: 3px 8px;
+  margin: 1px 0;
 }
 
-/* ── Emoji Reaction Tray ─────────────────────────────────────────────────── */
-#tog-emoji-bar {
-  display: flex;
-  justify-content: space-around;
-  padding: 8px 12px;
-  background: var(--tog-surface);
-  border-top: 1px solid var(--tog-border);
-}
-
-.tog-emoji-btn {
-  font-size: 20px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  border-radius: var(--tog-radius-sm);
-  padding: 4px 8px;
-  transition: transform var(--tog-transition), background var(--tog-transition);
-  line-height: 1;
-}
-
-.tog-emoji-btn:hover {
-  background: var(--tog-surface-hover);
-  transform: scale(1.3) translateY(-2px);
-}
-
-.tog-emoji-btn:active {
-  transform: scale(1.1);
-}
-
-/* ── Chat Input ───────────────────────────────────────────────────────────── */
+/* ── Chat Input Row ───────────────────────────────────────────────────────── */
 #tog-chat-input-row {
   display: flex;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 6px;
+  padding: 8px 10px;
   background: var(--tog-surface);
   border-top: 1px solid var(--tog-border);
 }
@@ -894,21 +782,21 @@
   background: var(--tog-surface-2);
   border: 1px solid var(--tog-border);
   border-radius: var(--tog-radius-md);
-  padding: 10px 14px;
+  padding: 6px 10px;
   color: var(--tog-text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   outline: none;
   resize: none;
-  min-height: 38px;
-  max-height: 80px;
-  line-height: 1.4;
+  min-height: 32px;
+  max-height: 60px;
+  line-height: 1.35;
   transition: border-color var(--tog-transition), box-shadow var(--tog-transition);
 }
 
 #tog-chat-input:focus {
   border-color: var(--tog-accent);
-  box-shadow: 0 0 0 3px var(--tog-accent-glow);
+  box-shadow: 0 0 0 2px var(--tog-accent-glow);
 }
 
 #tog-chat-input::placeholder {
@@ -916,8 +804,8 @@
 }
 
 #tog-send-btn {
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   border-radius: var(--tog-radius-md);
   background: linear-gradient(135deg, var(--tog-accent) 0%, #6d28d9 100%);
@@ -926,12 +814,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 15px var(--tog-accent-glow);
-  transition: transform var(--tog-transition), background var(--tog-transition);
+  box-shadow: 0 2px 10px var(--tog-accent-glow);
+  transition: transform var(--tog-transition);
 }
 
 #tog-send-btn:hover {
-  transform: scale(1.05);
+  transform: scale(1.06);
 }
 
 #tog-send-btn:active {
@@ -939,17 +827,45 @@
 }
 
 #tog-send-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   stroke: #ffffff;
   fill: none;
   stroke-width: 2.5;
 }
 
+/* ── Transient Chat Toast ─────────────────────────────────────────────────── */
+#tog-chat-toast {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  max-width: 270px;
+  padding: 8px 14px;
+  background: rgba(22, 18, 48, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--tog-accent-light);
+  border-radius: var(--tog-radius-md);
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65), 0 0 15px var(--tog-accent-glow);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 2147483646;
+}
+
+#tog-chat-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* ── Floating Emoji Particles ────────────────────────────────────────────── */
 .tog-emoji-float {
   position: fixed;
-  font-size: 36px;
+  font-size: 32px;
   pointer-events: none;
   z-index: 2147483646;
   animation: tog-emoji-float-up 2.2s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;

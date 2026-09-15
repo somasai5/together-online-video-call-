@@ -136,8 +136,22 @@ function injectOverlay() {
   log('Overlay injected successfully with Watch Party panel');
 }
 
-let drawerOpen = true;
 let unreadCount = 0;
+let pipMinimized = false;
+let toastTimeout = null;
+
+function showChatToast(msg) {
+  const toast = document.getElementById('tog-chat-toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  toast.classList.add('visible');
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.classList.add('hidden'), 300);
+  }, 3500);
+}
 
 function buildOverlayHTML() {
   const emojiButtons = EMOJIS.map(
@@ -178,66 +192,67 @@ function buildOverlayHTML() {
       ▶ Playback out of sync — click to resume
     </div>
 
-    <!-- ── Watch Party Drawer (Open by Default) ── -->
-    <div id="tog-drawer" class="open">
-      <div id="tog-drawer-header">
-        <div class="tog-drawer-brand">
-          <div class="tog-brand-icon">
-            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <div class="tog-brand-text">
-            <h2>Together</h2>
-            <p>Watch Party</p>
-          </div>
+    <!-- ── Floating Picture-in-Picture (PiP) Window (Compact & Draggable) ── -->
+    <div id="tog-pip-window">
+      <!-- PiP Window Draggable Header -->
+      <div id="tog-pip-header">
+        <div class="tog-pip-drag-handle">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="4" cy="6" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="12" cy="18" r="2"/><circle cx="20" cy="18" r="2"/></svg>
+          <span class="tog-pip-logo-text">Together</span>
+          <span class="tog-pip-room-pill" id="tog-pip-room-code">${escapeHTML(roomCode || '———')}</span>
         </div>
-        <button id="tog-drawer-close" title="Minimize Drawer">✕</button>
+        <div class="tog-pip-window-controls">
+          <button class="tog-pip-icon-btn" id="tog-pip-chat-toggle" title="Open / Close Chat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span id="tog-chat-unread-badge" class="hidden">0</span>
+          </button>
+          <button class="tog-pip-icon-btn" id="tog-pip-minimize-btn" title="Collapse Video">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <button class="tog-pip-icon-btn" id="tog-pip-close-btn" title="Dock to Corner Button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
       </div>
 
-      <div id="tog-live-info-bar">
-        <div class="tog-room-code-tag">
-          <span>Room:</span>
-          <strong id="tog-drawer-room-code">${escapeHTML(roomCode || '———')}</strong>
+      <!-- Now Watching Compact Movie Bar -->
+      <div id="tog-pip-movie-bar">
+        <div id="tog-pip-movie-info">
+          <span id="tog-pip-movie-icon">🎬</span>
+          <div id="tog-pip-movie-title" class="tog-pip-movie-title">
+            ${isHost ? escapeHTML(getMovieTitle(window.location.href)) : 'Waiting for host…'}
+          </div>
         </div>
-      </div>
-
-      <!-- ── Now Watching Movie Card ── -->
-      <div id="tog-drawer-movie-card">
-        <div class="tog-drawer-movie-header">
-          <span class="tog-movie-badge">NOW WATCHING</span>
-          <span id="tog-drawer-movie-status-icon">🎬</span>
-        </div>
-        <div id="tog-drawer-movie-title" class="tog-drawer-movie-title">
-          ${isHost ? escapeHTML(getMovieTitle(window.location.href)) : 'Waiting for host…'}
-        </div>
-        <button id="tog-drawer-switch-btn" class="tog-drawer-switch-btn hidden">
-          🎬 Switch to Host's Movie
+        <button id="tog-pip-switch-btn" class="tog-pip-switch-btn hidden">
+          Switch
         </button>
       </div>
 
-      <!-- ── Live Video Call Section ── -->
-      <div id="tog-drawer-video-card">
-        <div id="tog-webcam-section">
-          <div class="tog-video-tile" id="tog-local-tile">
-            <video id="tog-local-video" autoplay muted playsinline></video>
-            <div class="tog-cam-placeholder" id="tog-local-placeholder">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-              <span>Camera off</span>
-            </div>
-            <span class="tog-video-label">You</span>
+      <!-- Dual Webcam Video Section -->
+      <div id="tog-webcam-section">
+        <div class="tog-video-tile" id="tog-local-tile">
+          <video id="tog-local-video" autoplay muted playsinline></video>
+          <div class="tog-cam-placeholder" id="tog-local-placeholder">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            <span>You</span>
           </div>
-          <div class="tog-video-tile" id="tog-remote-tile">
-            <video id="tog-remote-video" autoplay playsinline></video>
-            <div class="tog-cam-placeholder" id="tog-remote-placeholder">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-              <span>Friend</span>
-            </div>
-            <span class="tog-video-label">Friend</span>
-          </div>
+          <span class="tog-video-label">You</span>
         </div>
+        <div class="tog-video-tile" id="tog-remote-tile">
+          <video id="tog-remote-video" autoplay playsinline></video>
+          <div class="tog-cam-placeholder" id="tog-remote-placeholder">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span>Friend</span>
+          </div>
+          <span class="tog-video-label">Friend</span>
+        </div>
+      </div>
 
-        <div id="tog-pip-toolbar">
+      <!-- Quick Control Toolbar -->
+      <div id="tog-pip-toolbar">
+        <div class="tog-pip-media-btns">
           <button class="tog-ctrl-btn" id="tog-mute-btn" title="Mute / Unmute Microphone">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
               <line x1="12" y1="19" x2="12" y2="23"/>
@@ -245,38 +260,39 @@ function buildOverlayHTML() {
             </svg>
           </button>
           <button class="tog-ctrl-btn" id="tog-cam-btn" title="Toggle Camera On / Off">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
             </svg>
           </button>
           <button class="tog-ctrl-btn tog-btn-call" id="tog-call-btn" title="Start Video Call">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.49 12 19.79 19.79 0 0 1 1.45 3.4 2 2 0 0 1 3.42 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.4a16 16 0 0 0 5.69 5.69l.84-.84a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
             </svg>
           </button>
         </div>
+        <div class="tog-pip-emoji-row" id="tog-emoji-bar">${emojiButtons}</div>
       </div>
 
-      <!-- ── Live Chat Area ── -->
-      <div id="tog-chat-messages" role="log" aria-live="polite"></div>
-
-      <!-- ── Emoji Bar ── -->
-      <div id="tog-emoji-bar">${emojiButtons}</div>
-
-      <!-- ── Chat Input Row ── -->
-      <div id="tog-chat-input-row">
-        <textarea id="tog-chat-input" placeholder="Type a message…" rows="1" maxlength="500"></textarea>
-        <button id="tog-send-btn" title="Send message">
-          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
+      <!-- Pop-up Expandable Chat Box -->
+      <div id="tog-chat-popover" class="hidden">
+        <div id="tog-chat-messages" role="log" aria-live="polite"></div>
+        <div id="tog-chat-input-row">
+          <textarea id="tog-chat-input" placeholder="Message…" rows="1" maxlength="500"></textarea>
+          <button id="tog-send-btn" title="Send message">
+            <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
       </div>
+
+      <!-- Transient Chat Toast (Appears briefly on incoming messages when popover is closed) -->
+      <div id="tog-chat-toast" class="hidden"></div>
     </div>
 
-    <!-- ── Floating Action Button (Toggle Drawer) ── -->
-    <button id="tog-toggle-btn" title="Toggle Watch Party Drawer">
+    <!-- ── Floating Action Button (Shows when PiP is docked) ── -->
+    <button id="tog-toggle-btn" class="hidden" title="Open Watch Party">
       <span id="tog-unread-badge" class="hidden">0</span>
       <svg viewBox="0 0 24 24">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
       </svg>
     </button>
   `;
@@ -292,7 +308,7 @@ function makePipDraggable() {
   let initialLeft = 0, initialTop = 0;
 
   header.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.tog-pip-icon-btn')) return;
+    if (e.target.closest('.tog-pip-icon-btn') || e.target.closest('button')) return;
     isDragging = true;
     startX = e.clientX;
     startY = e.clientY;
@@ -315,10 +331,10 @@ function makePipDraggable() {
       let newTop = initialTop + dy;
 
       // Clamping within viewport
-      const maxLeft = window.innerWidth - pip.offsetWidth - 10;
-      const maxTop = window.innerHeight - pip.offsetHeight - 10;
-      newLeft = Math.max(10, Math.min(newLeft, maxLeft));
-      newTop = Math.max(10, Math.min(newTop, maxTop));
+      const maxLeft = window.innerWidth - pip.offsetWidth - 12;
+      const maxTop = window.innerHeight - pip.offsetHeight - 12;
+      newLeft = Math.max(12, Math.min(newLeft, maxLeft));
+      newTop = Math.max(12, Math.min(newTop, maxTop));
 
       pip.style.left = `${newLeft}px`;
       pip.style.top = `${newTop}px`;
@@ -337,46 +353,84 @@ function makePipDraggable() {
 }
 
 function attachOverlayListeners() {
-  const drawer = document.getElementById('tog-drawer');
+  const pipWindow = document.getElementById('tog-pip-window');
   const toggleBtn = document.getElementById('tog-toggle-btn');
-  const closeBtn = document.getElementById('tog-drawer-close');
-  const badge = document.getElementById('tog-unread-badge');
+  const closeBtn = document.getElementById('tog-pip-close-btn');
+  const minimizeBtn = document.getElementById('tog-pip-minimize-btn');
+  const chatToggleBtn = document.getElementById('tog-pip-chat-toggle');
+  const chatPopover = document.getElementById('tog-chat-popover');
+  const chatBadge = document.getElementById('tog-chat-unread-badge');
+  const fabBadge = document.getElementById('tog-unread-badge');
 
-  function openDrawer() {
-    drawerOpen = true;
-    drawer?.classList.add('open');
+  function openChatPopover() {
+    chatPopover?.classList.remove('hidden');
+    chatToggleBtn?.classList.add('active');
     unreadCount = 0;
-    if (badge) {
-      badge.textContent = '0';
-      badge.classList.add('hidden');
+    if (chatBadge) {
+      chatBadge.textContent = '0';
+      chatBadge.classList.add('hidden');
     }
+    if (fabBadge) {
+      fabBadge.textContent = '0';
+      fabBadge.classList.add('hidden');
+    }
+    setTimeout(() => {
+      document.getElementById('tog-chat-input')?.focus();
+    }, 50);
   }
 
-  function closeDrawer() {
-    drawerOpen = false;
-    drawer?.classList.remove('open');
+  function closeChatPopover() {
+    chatPopover?.classList.add('hidden');
+    chatToggleBtn?.classList.remove('active');
   }
 
-  // Toggle drawer
-  toggleBtn?.addEventListener('click', () => {
-    if (drawerOpen) closeDrawer();
-    else openDrawer();
-  });
-
-  closeBtn?.addEventListener('click', closeDrawer);
-
-  // Close on Escape key
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && drawerOpen) {
-      closeDrawer();
+  // Toggle Chat Popover
+  chatToggleBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (chatPopover?.classList.contains('hidden')) {
+      openChatPopover();
+    } else {
+      closeChatPopover();
     }
   });
 
-  // Movie switch banner & drawer buttons
+  // Collapse / Minimize Webcam Video section
+  minimizeBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const sec = document.getElementById('tog-webcam-section');
+    if (sec) {
+      pipMinimized = !pipMinimized;
+      sec.style.display = pipMinimized ? 'none' : 'flex';
+      minimizeBtn.title = pipMinimized ? 'Expand Video' : 'Collapse Video';
+      minimizeBtn.innerHTML = pipMinimized
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+    }
+  });
+
+  // Dock PiP window into floating bubble
+  closeBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pipWindow?.classList.add('hidden');
+    toggleBtn?.classList.remove('hidden');
+  });
+
+  // Restore PiP window from bubble
+  toggleBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pipWindow?.classList.remove('hidden');
+    toggleBtn?.classList.add('hidden');
+    unreadCount = 0;
+    if (fabBadge) {
+      fabBadge.textContent = '0';
+      fabBadge.classList.add('hidden');
+    }
+  });
+
+  // Fast Movie switch handler
   function fastNavigate(targetUrl) {
     if (!targetUrl) return;
 
-    // Direct player URL optimization: if movie/show URL, route directly to /watch to skip the overview screen
     let urlToLoad = targetUrl;
     try {
       const u = new URL(targetUrl, window.location.origin);
@@ -386,12 +440,11 @@ function attachOverlayListeners() {
       }
     } catch {}
 
-    // Instant UI feedback
-    const drawerSwitchBtn = document.getElementById('tog-drawer-switch-btn');
+    const pipSwitchBtn = document.getElementById('tog-pip-switch-btn');
     const bannerSwitchBtn = document.getElementById('tog-switch-movie-btn');
-    if (drawerSwitchBtn) {
-      drawerSwitchBtn.innerHTML = '⏳ Loading Movie…';
-      drawerSwitchBtn.disabled = true;
+    if (pipSwitchBtn) {
+      pipSwitchBtn.innerHTML = '⏳ Loading…';
+      pipSwitchBtn.disabled = true;
     }
     if (bannerSwitchBtn) {
       bannerSwitchBtn.innerHTML = '⏳ Loading…';
@@ -400,7 +453,6 @@ function attachOverlayListeners() {
 
     log('Fast navigating to movie:', urlToLoad);
 
-    // 1. Try instant SPA client-side click if matching link exists on page
     const cleanPath = new URL(urlToLoad, window.location.origin).pathname;
     const existingLink = Array.from(document.querySelectorAll('a')).find((a) => {
       try {
@@ -414,7 +466,6 @@ function attachOverlayListeners() {
     if (existingLink) {
       existingLink.click();
       setTimeout(() => {
-        // Fallback if SPA click didn't navigate within 120ms
         if (window.location.href !== urlToLoad) {
           window.location.assign(urlToLoad);
         }
@@ -422,7 +473,6 @@ function attachOverlayListeners() {
       return;
     }
 
-    // 2. Direct fast assign
     window.location.assign(urlToLoad);
   }
 
@@ -432,7 +482,7 @@ function attachOverlayListeners() {
     }
   };
   document.getElementById('tog-switch-movie-btn')?.addEventListener('click', onSwitchMovie);
-  document.getElementById('tog-drawer-switch-btn')?.addEventListener('click', onSwitchMovie);
+  document.getElementById('tog-pip-switch-btn')?.addEventListener('click', onSwitchMovie);
   document.getElementById('tog-dismiss-movie-btn')?.addEventListener('click', () => {
     document.getElementById('tog-movie-banner')?.classList.add('hidden');
   });
@@ -484,7 +534,7 @@ function attachOverlayListeners() {
   const chatInput = document.getElementById('tog-chat-input');
   document.getElementById('tog-send-btn')?.addEventListener('click', sendChatMessage);
   chatInput?.addEventListener('keydown', (e) => {
-    e.stopPropagation(); // prevent Hotstar video controls from stealing hotkeys (e.g. Space)
+    e.stopPropagation();
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendChatMessage();
@@ -502,18 +552,8 @@ function attachOverlayListeners() {
 
   // WebRTC controls
   document.getElementById('tog-call-btn')?.addEventListener('click', handleCallToggle);
-  document.getElementById('tog-drawer-call-btn')?.addEventListener('click', handleCallToggle);
   document.getElementById('tog-mute-btn')?.addEventListener('click', handleMuteToggle);
   document.getElementById('tog-cam-btn')?.addEventListener('click', handleCamToggle);
-
-  // Minimize PiP window toggle
-  document.getElementById('tog-pip-minimize-btn')?.addEventListener('click', () => {
-    const sec = document.getElementById('tog-webcam-section');
-    if (sec) {
-      const isHidden = sec.style.display === 'none';
-      sec.style.display = isHidden ? 'flex' : 'none';
-    }
-  });
 
   // Fullscreen change — reparent overlay
   document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -615,8 +655,8 @@ function escapeHTML(str) {
 let lastRenderedMovieStateKey = '';
 
 function updateDrawerMovieCard(url, title, isHostRole) {
-  const titleEl = document.getElementById('tog-drawer-movie-title');
-  const switchBtn = document.getElementById('tog-drawer-switch-btn');
+  const titleEl = document.getElementById('tog-pip-movie-title') || document.getElementById('tog-drawer-movie-title');
+  const switchBtn = document.getElementById('tog-pip-switch-btn') || document.getElementById('tog-drawer-switch-btn');
   const banner = document.getElementById('tog-movie-banner');
   const bannerText = document.getElementById('tog-movie-text');
 
@@ -639,7 +679,7 @@ function updateDrawerMovieCard(url, title, isHostRole) {
 
   // Guest role
   if (!lastKnownHostUrl) {
-    titleEl.innerHTML = `<em>Waiting for host to pick a movie…</em>`;
+    titleEl.innerHTML = `<em>Waiting for host…</em>`;
     if (switchBtn) switchBtn.classList.add('hidden');
     if (banner) banner.classList.add('hidden');
     return;
@@ -649,7 +689,7 @@ function updateDrawerMovieCard(url, title, isHostRole) {
     pendingMovieUrl = lastKnownHostUrl;
     titleEl.innerHTML = `<span style="color:#f59e0b">Host is on:</span> <strong>${escapeHTML(hostTitle)}</strong>`;
     if (switchBtn) {
-      switchBtn.textContent = `🎬 Switch to ${hostTitle}`;
+      switchBtn.textContent = `Switch`;
       switchBtn.disabled = false;
       switchBtn.classList.remove('hidden');
     }
@@ -663,7 +703,7 @@ function updateDrawerMovieCard(url, title, isHostRole) {
     }
   } else {
     pendingMovieUrl = null;
-    titleEl.innerHTML = `<span style="color:#10b981">✓ Watching with Host:</span> <strong>${escapeHTML(hostTitle)}</strong>`;
+    titleEl.innerHTML = `<span style="color:#10b981">✓ In Sync:</span> <strong>${escapeHTML(hostTitle)}</strong>`;
     if (switchBtn) switchBtn.classList.add('hidden');
     if (banner) banner.classList.add('hidden');
   }
@@ -1326,34 +1366,40 @@ function sendChatMessage() {
 
 function appendChatMessage(text, who, sender) {
   const container = document.getElementById('tog-chat-messages');
-  if (!container) return;
+  if (container) {
+    const div  = document.createElement('div');
+    div.className = `tog-msg ${who}`;
 
-  const div  = document.createElement('div');
-  div.className = `tog-msg ${who}`;
+    const meta   = document.createElement('div');
+    meta.className = 'tog-msg-meta';
+    meta.textContent = who === 'mine' ? 'You' : who === 'system' ? '' : (sender || 'Friend');
 
-  const meta   = document.createElement('div');
-  meta.className = 'tog-msg-meta';
-  meta.textContent = who === 'mine' ? 'You' : who === 'system' ? '' : (sender || 'Friend');
+    const bubble = document.createElement('div');
+    bubble.className = 'tog-msg-bubble';
+    bubble.textContent = text;
 
-  const bubble = document.createElement('div');
-  bubble.className = 'tog-msg-bubble';
-  bubble.textContent = text; // ← textContent only, never innerHTML (XSS safe)
+    if (who !== 'system') div.appendChild(meta);
+    div.appendChild(bubble);
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+  }
 
-  if (who !== 'system') div.appendChild(meta);
-  div.appendChild(bubble);
-  container.appendChild(div);
+  const chatPopover = document.getElementById('tog-chat-popover');
+  const isChatOpen = chatPopover && !chatPopover.classList.contains('hidden');
 
-  // Auto-scroll to bottom
-  container.scrollTop = container.scrollHeight;
-
-  // If chat message from peer arrived while drawer is closed, increment unread badge
-  if (!drawerOpen && who !== 'mine' && who !== 'system') {
+  if (!isChatOpen && who !== 'mine') {
     unreadCount++;
-    const badge = document.getElementById('tog-unread-badge');
+    const badge = document.getElementById('tog-chat-unread-badge');
+    const fabBadge = document.getElementById('tog-unread-badge');
     if (badge) {
       badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
       badge.classList.remove('hidden');
     }
+    if (fabBadge) {
+      fabBadge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+      fabBadge.classList.remove('hidden');
+    }
+    showChatToast(who === 'system' ? text : `${sender || 'Friend'}: ${text}`);
   }
 }
 
@@ -1995,8 +2041,8 @@ function initRoom(data) {
   isInRoom      = true;
 
   injectOverlay();
-  const drawerRoomEl = document.getElementById('tog-drawer-room-code');
-  if (drawerRoomEl) drawerRoomEl.textContent = roomCode || '———';
+  const pipRoomEl = document.getElementById('tog-pip-room-code') || document.getElementById('tog-drawer-room-code');
+  if (pipRoomEl) pipRoomEl.textContent = roomCode || '———';
 
   startVideoObserver();
   startAdDetection();
