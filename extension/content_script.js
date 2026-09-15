@@ -1807,10 +1807,60 @@ function showLocalStream(stream) {
   }
 }
 
+let remoteAudioEl = null;
+
+function ensureRemoteAudio(stream) {
+  try {
+    if (!remoteAudioEl || !remoteAudioEl.isConnected) {
+      let existing = document.getElementById('tog-remote-audio');
+      if (existing) {
+        remoteAudioEl = existing;
+      } else {
+        remoteAudioEl = document.createElement('audio');
+        remoteAudioEl.id = 'tog-remote-audio';
+        remoteAudioEl.autoplay = true;
+        remoteAudioEl.playsInline = true;
+        (document.body || document.documentElement).appendChild(remoteAudioEl);
+      }
+    }
+
+    if (stream && stream.getAudioTracks().length > 0) {
+      if (remoteAudioEl.srcObject !== stream) {
+        remoteAudioEl.srcObject = stream;
+      }
+      remoteAudioEl.muted = false;
+      remoteAudioEl.volume = 1.0;
+      const playPromise = remoteAudioEl.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          log('Remote audio autoplay blocked by Chrome policy, waiting for user gesture:', err);
+          const resumeAudio = () => {
+            if (remoteAudioEl && remoteAudioEl.srcObject) {
+              remoteAudioEl.muted = false;
+              remoteAudioEl.play().catch(() => {});
+            }
+            document.removeEventListener('click', resumeAudio);
+            document.removeEventListener('keydown', resumeAudio);
+          };
+          document.addEventListener('click', resumeAudio, { once: true });
+          document.addEventListener('keydown', resumeAudio, { once: true });
+        });
+      }
+    } else if (remoteAudioEl) {
+      remoteAudioEl.srcObject = null;
+    }
+  } catch (e) {
+    log('ensureRemoteAudio error:', e);
+  }
+}
+
 function showRemoteStream(stream) {
   const video       = document.getElementById('tog-remote-video');
   const placeholder = document.getElementById('tog-remote-placeholder');
   if (!video) return;
+
+  // Route incoming audio to dedicated high-priority audio pipeline
+  ensureRemoteAudio(stream);
 
   if (stream && stream.getTracks().length > 0) {
     if (video.srcObject !== stream) {
@@ -1822,21 +1872,11 @@ function showRemoteStream(stream) {
 
     video.autoplay = true;
     video.playsInline = true;
+    video.muted = true; // Video element is muted so audio doesn't double with remoteAudioEl
 
     const p = video.play();
     if (p && typeof p.catch === 'function') {
-      p.catch((err) => {
-        log('Remote video autoplay blocked, muting to display video:', err);
-        video.muted = true;
-        video.play().catch(() => {});
-        const unmute = () => {
-          video.muted = false;
-          document.removeEventListener('click', unmute);
-          document.removeEventListener('keydown', unmute);
-        };
-        document.addEventListener('click', unmute, { once: true });
-        document.addEventListener('keydown', unmute, { once: true });
-      });
+      p.catch(() => {});
     }
   } else {
     video.srcObject = null;
@@ -1849,11 +1889,13 @@ function showRemoteStream(stream) {
 
 function handleMuteToggle() {
   if (!localStream) return;
-  const track = localStream.getAudioTracks()[0];
-  if (!track) return;
+  const audioTracks = localStream.getAudioTracks();
+  if (!audioTracks.length) return;
 
-  track.enabled = !track.enabled;
-  document.getElementById('tog-mute-btn').classList.toggle('muted', !track.enabled);
+  const isEnabled = !audioTracks[0].enabled;
+  audioTracks.forEach((t) => { t.enabled = isEnabled; });
+  document.getElementById('tog-mute-btn')?.classList.toggle('muted', !isEnabled);
+  showChatToast(isEnabled ? '🎤 Microphone unmuted' : '🔇 Microphone muted');
 }
 
 function handleCamToggle() {
