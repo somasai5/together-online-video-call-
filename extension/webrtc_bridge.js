@@ -98,9 +98,10 @@ function showLocalStream(stream) {
       video.srcObject = stream;
     }
     video.muted = true;
-    const hasVideo = stream.getVideoTracks().length > 0 && stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
-    if (placeholder) placeholder.style.display = hasVideo ? 'none' : '';
-    video.style.display = hasVideo ? 'block' : 'none';
+    video.autoplay = true;
+    video.playsInline = true;
+    if (placeholder) placeholder.style.display = 'none';
+    video.style.display = 'block';
     video.play().catch(() => {});
   } else {
     video.srcObject = null;
@@ -135,22 +136,28 @@ function showRemoteStream(stream) {
     video.playsInline = true;
     video.muted = true;
 
-    const checkVideo = () => {
+    const reveal = () => {
       const vTracks = stream.getVideoTracks();
-      const hasLive = vTracks.length > 0 && vTracks.some((t) => t.enabled && t.readyState === 'live');
+      const hasLive = vTracks.length > 0 && vTracks.some((t) => t.enabled && t.readyState !== 'ended');
       if (placeholder) placeholder.style.display = hasLive ? 'none' : '';
       video.style.display = hasLive ? 'block' : 'none';
       if (hasLive) video.play().catch(() => {});
     };
 
-    checkVideo();
-    stream.onaddtrack = checkVideo;
-    stream.onremovetrack = checkVideo;
+    reveal();
+
+    video.onloadeddata = reveal;
+    video.oncanplay = reveal;
+    video.onplaying = reveal;
+    video.onloadedmetadata = reveal;
+
+    stream.onaddtrack = reveal;
+    stream.onremovetrack = reveal;
     stream.getVideoTracks().forEach((track) => {
-      track.onunmute = checkVideo;
-      track.onmute = checkVideo;
+      track.onunmute = reveal;
+      track.onmute = reveal;
+      track.onended = reveal;
     });
-    video.onloadedmetadata = checkVideo;
   } else {
     video.srcObject = null;
     if (placeholder) placeholder.style.display = '';
@@ -191,10 +198,16 @@ async function setupPeerConnection() {
 
   pc.addEventListener('track', (e) => {
     log('Remote track received in bridge:', e.track.kind, e.track.id);
+    if (!remoteStream) {
+      remoteStream = new MediaStream();
+    }
     if (e.streams && e.streams[0]) {
-      remoteStream = e.streams[0];
+      e.streams[0].getTracks().forEach((track) => {
+        if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+          remoteStream.addTrack(track);
+        }
+      });
     } else {
-      if (!remoteStream) remoteStream = new MediaStream();
       if (!remoteStream.getTracks().some((t) => t.id === e.track.id)) {
         remoteStream.addTrack(e.track);
       }
@@ -219,6 +232,7 @@ async function setupPeerConnection() {
     if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
       log('Bridge WebRTC media stream connected successfully!');
       notifyContent({ type: 'bridge-status', status: 'connected' });
+      if (remoteStream) showRemoteStream(remoteStream);
     } else if (pc.iceConnectionState === 'failed') {
       log('Bridge ICE failed, restarting ICE...');
       try {
@@ -238,6 +252,7 @@ async function setupPeerConnection() {
     log('Bridge WebRTC connection state:', pc.connectionState);
     if (pc.connectionState === 'connected') {
       notifyContent({ type: 'bridge-status', status: 'connected' });
+      if (remoteStream) showRemoteStream(remoteStream);
     } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
       notifyContent({ type: 'bridge-status', status: 'disconnected' });
     }
