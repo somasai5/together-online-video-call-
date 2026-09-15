@@ -39,6 +39,7 @@ const RELAY_EVENTS = new Set([
   'offer',
   'answer',
   'ice-candidate',
+  'call-ended',
   'state-request',
   'state-snapshot',
 ]);
@@ -216,6 +217,9 @@ function handleMessage(ws, rawData, participantId) {
     return;
   }
 
+  // ── ping: keepalive from client, no relay needed ─────────────────────────
+  if (type === 'ping') return;
+
   log('warn', `[MSG] Unknown event type "${type}" from ${participantId}, dropping`);
 }
 
@@ -344,6 +348,8 @@ function handleConnection(ws, req) {
           const peer = getPeer(room, id);
           if (peer && peer.ws) {
             send(peer.ws, { type: 'peer-joined', participantId: id });
+            // Also tell the new joiner that their peer is already here
+            send(ws, { type: 'peer-joined', participantId: peer.id });
             // Ask host to send state snapshot for new guest
             const hostParticipant = room.participants.get(room.hostId);
             if (hostParticipant && hostParticipant.ws) {

@@ -55,21 +55,33 @@ function sendToBackground(payload) {
 }
 
 // ─── Restore persisted state on popup open ────────────────────────────────────
+function applyStoredState(data) {
+  if (!data || !data.roomCode) return;
+  currentRoomCode = data.roomCode;
+  participantId   = data.participantId;
+  isHost          = data.isHost ?? false;
+  peerConnected   = data.peerConnected ?? false;
+
+  roomCodeValue.textContent = data.roomCode;
+  myRole.textContent        = isHost ? 'Host' : 'Guest';
+
+  updatePeerStatus(peerConnected);
+  showScreen('room');
+  setStatus('connected', 'In room');
+}
+
 chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'peerConnected'], (data) => {
-  if (data.roomCode) {
-    currentRoomCode = data.roomCode;
-    participantId   = data.participantId;
-    isHost          = data.isHost ?? false;
-    peerConnected   = data.peerConnected ?? false;
-
-    roomCodeValue.textContent = data.roomCode;
-    myRole.textContent        = isHost ? 'Host' : 'Guest';
-
-    updatePeerStatus(peerConnected);
-    showScreen('room');
-    setStatus('connected', 'In room');
+  if (data && data.roomCode) {
+    applyStoredState(data);
+  } else {
+    chrome.storage.local.get(['roomCode', 'participantId', 'isHost', 'peerConnected'], (localData) => {
+      applyStoredState(localData);
+    });
   }
 });
+
+// Immediately ask background for live WebSocket status
+sendToBackground({ type: 'get-status' });
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 
@@ -119,6 +131,7 @@ btnCopy.addEventListener('click', () => {
 btnLeave.addEventListener('click', () => {
   sendToBackground({ type: 'ws-disconnect' });
   chrome.storage.session.clear();
+  chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected']);
   currentRoomCode = null;
   participantId   = null;
   isHost          = false;
@@ -150,7 +163,9 @@ chrome.runtime.onMessage.addListener((message) => {
       isHost          = true;
       peerConnected   = false;
 
-      chrome.storage.session.set({ roomCode: message.roomCode, participantId, isHost: true, peerConnected: false });
+      const hostState = { roomCode: message.roomCode, participantId, isHost: true, peerConnected: false };
+      chrome.storage.session.set(hostState);
+      chrome.storage.local.set(hostState);
 
       roomCodeValue.textContent = message.roomCode;
       myRole.textContent        = 'Host';
@@ -166,7 +181,9 @@ chrome.runtime.onMessage.addListener((message) => {
       participantId   = message.participantId;
       isHost          = message.isHost;
 
-      chrome.storage.session.set({ roomCode: message.roomCode, participantId, isHost, peerConnected: false });
+      const guestState = { roomCode: message.roomCode, participantId, isHost, peerConnected: false };
+      chrome.storage.session.set(guestState);
+      chrome.storage.local.set(guestState);
 
       roomCodeValue.textContent = message.roomCode;
       myRole.textContent        = message.isHost ? 'Host' : 'Guest';
@@ -180,18 +197,21 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'peer-reconnected':
       peerConnected = true;
       chrome.storage.session.set({ peerConnected: true });
+      chrome.storage.local.set({ peerConnected: true });
       updatePeerStatus(true);
       break;
 
     case 'peer-disconnected':
       peerConnected = false;
       chrome.storage.session.set({ peerConnected: false });
+      chrome.storage.local.set({ peerConnected: false });
       updatePeerStatus(false);
       break;
 
     case 'you-are-host':
       isHost = true;
       chrome.storage.session.set({ isHost: true });
+      chrome.storage.local.set({ isHost: true });
       myRole.textContent = 'Host';
       break;
 

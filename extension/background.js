@@ -61,16 +61,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // From offscreen → forward to active Hotstar tab content scripts
   if (source === 'offscreen') {
     // If this is a room-state update, persist it
-    if (type === 'room-state') {
-      chrome.storage.session.set({
+    if (type === 'room-created' || type === 'joined' || type === 'reconnected' || type === 'room-state') {
+      const roomState = {
         roomCode: message.roomCode,
         participantId: message.participantId,
         isHost: message.isHost,
-      }).catch(() => {});
+      };
+      chrome.storage.session.set(roomState).catch(() => {});
+      chrome.storage.local.set(roomState).catch(() => {});
     }
 
     // Broadcast to all Hotstar content script tabs
-    chrome.tabs.query({ url: ['*://*.hotstar.com/*', '*://*.disneyplus.hotstar.com/*'] }, (tabs) => {
+    chrome.tabs.query({ url: ['*://*.hotstar.com/*', '*://*.disneyplus.hotstar.com/*', '*://*.jiohotstar.com/*'] }, (tabs) => {
       for (const tab of tabs) {
         chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {});
       }

@@ -41,8 +41,7 @@ let isInRoom      = false;
 
 let videoEl       = null;
 let isSyncing     = false;       // guard against feedback loops
-let syncEnabled   = false;       // guest must click "Enable Sync" first
-
+let syncEnabled   = true;        // enabled by default
 let isInAdBreak   = false;       // don't sync during ads
 
 let driftInterval = null;
@@ -241,22 +240,37 @@ function attachOverlayListeners() {
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 }
 
-// ─── Video element detection ──────────────────────────────────────────────────
+function findMainVideo() {
+  const videos = Array.from(document.querySelectorAll('video')).filter((v) => {
+    return v.id !== 'tog-local-video' && v.id !== 'tog-remote-video' && !v.closest('#together-overlay-root');
+  });
 
-/**
- * Hotstar is a SPA — the <video> element can be swapped between
- * episodes/titles/ads. Use MutationObserver to re-detect it whenever
- * the player container changes.
- */
+  if (videos.length === 0) return null;
+  if (videos.length === 1) return videos[0];
+
+  // Pick the largest visible video on the page
+  let best = videos[0];
+  let maxArea = -1;
+  for (const v of videos) {
+    const rect = v.getBoundingClientRect();
+    const area = rect.width * rect.height;
+    if (area > maxArea) {
+      maxArea = area;
+      best = v;
+    }
+  }
+  return best;
+}
+
 function startVideoObserver() {
   if (videoObserver) videoObserver.disconnect();
 
   function tryAttach() {
-    const v = document.querySelector('video');
+    const v = findMainVideo();
     if (v && v !== videoEl) {
       videoEl = v;
       attachVideoListeners(v);
-      log('Video element attached:', v);
+      log('Main Hotstar video element attached:', v);
     }
   }
 
@@ -264,16 +278,20 @@ function startVideoObserver() {
 
   videoObserver = new MutationObserver(() => tryAttach());
   videoObserver.observe(document.body, { childList: true, subtree: true });
+
+  if (!window._togVideoCheckInterval) {
+    window._togVideoCheckInterval = setInterval(tryAttach, 2000);
+  }
 }
 
 function attachVideoListeners(v) {
-  // Remove any previous listeners by cloning and re-adding
-  // (avoids double-firing if the same element is re-attached)
+  if (v._togListenersAttached) return;
   v._togListenersAttached = true;
 
   v.addEventListener('play',   onVideoPlay);
   v.addEventListener('pause',  onVideoPause);
   v.addEventListener('seeked', onVideoSeeked);
+  log('Hooked play/pause/seeked event listeners to main video');
 }
 
 // ─── Playback sync — host side ────────────────────────────────────────────────
@@ -358,18 +376,10 @@ function applyDriftCorrection(hostTime) {
  * Adjust the selectors here based on real DOM inspection.
  */
 function startAdDetection() {
-  const AD_CLASS_PATTERNS = ['ad-', 'advertisement', 'preroll', 'midroll'];
-
   function checkAdState() {
-    // Method 1: class-based detection on player wrapper
-    const playerRoot = document.querySelector('[class*="player"], [id*="player"]');
-    const classStr   = playerRoot ? playerRoot.className : '';
-    const byClass    = AD_CLASS_PATTERNS.some((p) => classStr.toLowerCase().includes(p));
-
-    // Method 2: look for Hotstar's ad indicator elements
-    const adOverlay  = !!document.querySelector('[class*="AdOverlay"], [class*="ad-container"], [data-testid*="ad"]');
-
-    const nowInAd = byClass || adOverlay;
+    // Only detect ads if an explicit ad overlay element exists on Hotstar
+    const adOverlay = !!document.querySelector('.ad-container, [data-testid*="ad-container"], .ad-badge, .ad-timer, [class*="AdOverlay"]');
+    const nowInAd = adOverlay;
 
     if (nowInAd !== isInAdBreak) {
       isInAdBreak = nowInAd;
@@ -450,36 +460,47 @@ function spawnEmojiFloat(emoji) {
 
 // ─── WebRTC ───────────────────────────────────────────────────────────────────
 
+let pendingIceCandidates = [];
+
 async function handleCallToggle() {
   if (pc) {
-    endCall();
+    endCall(true);
   } else {
     await startCall();
   }
 }
 
-async function startCall() {
-  log('Starting WebRTC call');
-
+async function getLocalMediaStream() {
   try {
-    // Request media from extension's webrtc_bridge page context to
-    // scope permissions to the extension (not hotstar.com).
-    // We open a hidden extension popup and receive the stream via postMessage.
-    localStream = await requestLocalStreamViaExtensionPage();
+    return await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
   } catch (err) {
-    log('getUserMedia failed:', err);
-    appendChatMessage('Could not access camera/mic: ' + err.message, 'system');
-    return;
+    log('getUserMedia (audio+video) failed, trying video only:', err);
+    try {
+      return await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (e2) {
+      log('getUserMedia video-only failed, trying audio only:', e2);
+      return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+    }
   }
+}
 
-  showLocalStream(localStream);
+async function setupPeerConnection() {
+  if (pc) {
+    try { pc.close(); } catch {}
+  }
 
   pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+  if (localStream) {
+    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+  }
 
   pc.addEventListener('track', (e) => {
-    remoteStream = e.streams[0];
+    log('Remote track received:', e.track.kind);
+    remoteStream = e.streams[0] || new MediaStream([e.track]);
     showRemoteStream(remoteStream);
   });
 
@@ -491,68 +512,64 @@ async function startCall() {
 
   pc.addEventListener('connectionstatechange', () => {
     log('WebRTC connection state:', pc.connectionState);
-    if (pc.connectionState === 'failed') {
-      appendChatMessage('WebRTC connection failed. Check your TURN config.', 'system');
+    if (pc.connectionState === 'connected') {
+      appendChatMessage('Video call connected!', 'system');
+      document.getElementById('tog-call-btn')?.classList.add('active');
+    } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      appendChatMessage('Video call disconnected.', 'system');
+      document.getElementById('tog-call-btn')?.classList.remove('active');
     }
   });
 
-  if (isHost) {
-    // Host creates offer
+  return pc;
+}
+
+async function startCall() {
+  log('Starting WebRTC call...');
+
+  try {
+    localStream = await getLocalMediaStream();
+  } catch (err) {
+    log('getUserMedia failed:', err);
+    appendChatMessage('Could not access camera/mic: ' + (err.message || 'Permission denied'), 'system');
+    return;
+  }
+
+  showLocalStream(localStream);
+  await setupPeerConnection();
+
+  try {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     sendWS({ type: 'offer', sdp: pc.localDescription });
     log('Offer sent');
+    appendChatMessage('Calling friend...', 'system');
+  } catch (err) {
+    log('Failed to create offer:', err);
   }
-  // Guest waits for offer via incoming message handler
 }
 
-function endCall() {
-  if (pc) { pc.close(); pc = null; }
+function endCall(notifyPeer = true) {
+  if (pc) {
+    try { pc.close(); } catch {}
+    pc = null;
+  }
   if (localStream) {
     localStream.getTracks().forEach((t) => t.stop());
     localStream = null;
   }
   remoteStream = null;
+  pendingIceCandidates = [];
   showLocalStream(null);
   showRemoteStream(null);
+  document.getElementById('tog-call-btn')?.classList.remove('active');
+  document.getElementById('tog-cam-btn')?.classList.remove('active');
+  document.getElementById('tog-mute-btn')?.classList.remove('active');
   log('Call ended');
-}
 
-/**
- * Request getUserMedia from an extension-owned context by opening the
- * webrtc_bridge page and using postMessage to receive the stream.
- *
- * Because the bridge page runs under the extension's origin, the browser
- * permission prompt says "Together wants your camera" — not hotstar.com.
- */
-async function requestLocalStreamViaExtensionPage() {
-  return new Promise((resolve, reject) => {
-    const bridgeUrl = chrome.runtime.getURL('webrtc_bridge.html');
-    const win = window.open(bridgeUrl, '_blank', 'width=1,height=1,left=-9999,top=-9999');
-
-    const timer = setTimeout(() => {
-      reject(new Error('WebRTC bridge timeout'));
-    }, 15_000);
-
-    function onBridgeMessage(event) {
-      if (event.origin !== new URL(bridgeUrl).origin) return;
-      if (event.data?.type === 'stream-ready') {
-        clearTimeout(timer);
-        window.removeEventListener('message', onBridgeMessage);
-        resolve(event.data.stream);
-        // We DON'T close the bridge window — it must stay alive to keep the MediaStream active.
-        // Instead we minimize it.
-        if (win && !win.closed) win.blur();
-      }
-      if (event.data?.type === 'stream-error') {
-        clearTimeout(timer);
-        window.removeEventListener('message', onBridgeMessage);
-        reject(new Error(event.data.message));
-        if (win && !win.closed) win.close();
-      }
-    }
-    window.addEventListener('message', onBridgeMessage);
-  });
+  if (notifyPeer) {
+    sendWS({ type: 'call-ended' });
+  }
 }
 
 function showLocalStream(stream) {
@@ -562,12 +579,14 @@ function showLocalStream(stream) {
 
   if (stream) {
     video.srcObject = stream;
-    placeholder.style.display = 'none';
-    video.style.display       = 'block';
+    video.muted = true;
+    video.play().catch(() => {});
+    if (placeholder) placeholder.style.display = 'none';
+    video.style.display = 'block';
   } else {
-    video.srcObject           = null;
-    placeholder.style.display = '';
-    video.style.display       = 'none';
+    video.srcObject = null;
+    if (placeholder) placeholder.style.display = '';
+    video.style.display = 'none';
   }
 }
 
@@ -578,12 +597,13 @@ function showRemoteStream(stream) {
 
   if (stream) {
     video.srcObject = stream;
-    placeholder.style.display = 'none';
-    video.style.display       = 'block';
+    video.play().catch(() => {});
+    if (placeholder) placeholder.style.display = 'none';
+    video.style.display = 'block';
   } else {
-    video.srcObject           = null;
-    placeholder.style.display = '';
-    video.style.display       = 'none';
+    video.srcObject = null;
+    if (placeholder) placeholder.style.display = '';
+    video.style.display = 'none';
   }
 }
 
@@ -745,32 +765,59 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'ice-candidate':
       handleIncomingIce(message);
       break;
+
+    case 'call-ended':
+      endCall(false);
+      appendChatMessage('Video call ended by friend.', 'system');
+      break;
   }
 });
 
 // ─── WebRTC signaling handlers ────────────────────────────────────────────────
 
 async function handleIncomingOffer(message) {
-  if (isHost) return; // host creates offer, guest handles it
+  log('Received offer — answering call');
+  if (!localStream) {
+    try {
+      localStream = await getLocalMediaStream();
+      showLocalStream(localStream);
+    } catch (err) {
+      log('Could not get local stream on incoming call:', err);
+    }
+  }
 
-  log('Received offer — starting call as guest');
-  await startCall(); // sets up pc
+  await setupPeerConnection();
 
-  await pc.setRemoteDescription(new RTCSessionDescription(message.sdp));
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  sendWS({ type: 'answer', sdp: pc.localDescription });
-  log('Answer sent');
+  try {
+    await pc.setRemoteDescription(new RTCSessionDescription(message.sdp));
+    await flushIceCandidates();
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    sendWS({ type: 'answer', sdp: pc.localDescription });
+    log('Answer sent');
+    appendChatMessage('Answering video call...', 'system');
+  } catch (err) {
+    log('Handle offer failed:', err);
+  }
 }
 
 async function handleIncomingAnswer(message) {
   if (!pc) return;
-  await pc.setRemoteDescription(new RTCSessionDescription(message.sdp));
-  log('Answer received, remote description set');
+  try {
+    await pc.setRemoteDescription(new RTCSessionDescription(message.sdp));
+    await flushIceCandidates();
+    log('Answer received, remote description set');
+  } catch (err) {
+    log('Handle answer failed:', err);
+  }
 }
 
 async function handleIncomingIce(message) {
-  if (!pc) return;
+  if (!message.candidate) return;
+  if (!pc || !pc.remoteDescription) {
+    pendingIceCandidates.push(message.candidate);
+    return;
+  }
   try {
     await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
   } catch (e) {
@@ -778,30 +825,52 @@ async function handleIncomingIce(message) {
   }
 }
 
+async function flushIceCandidates() {
+  if (!pc || !pc.remoteDescription) return;
+  while (pendingIceCandidates.length > 0) {
+    const candidate = pendingIceCandidates.shift();
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (e) {
+      log('Flush ICE error:', e);
+    }
+  }
+}
+
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
-// Restore state if already in a room (e.g. page reload)
+function initRoom(data) {
+  if (!data || !data.roomCode || isInRoom) return;
+  roomCode      = data.roomCode;
+  participantId = data.participantId;
+  isHost        = data.isHost ?? false;
+  isInRoom      = true;
+
+  injectOverlay();
+  startVideoObserver();
+  startAdDetection();
+
+  if (isHost) {
+    startDriftHeartbeat();
+  }
+
+  // Ask for fresh state from host
+  sendWS({ type: 'state-request' });
+  log('Restored room session:', roomCode, 'isHost:', isHost);
+}
+
+// Start watching for video elements immediately on page load
+startVideoObserver();
+
+// Restore state if already in a room (e.g. page reload or navigation)
 chrome.storage.session.get(['roomCode', 'participantId', 'isHost'], (data) => {
-  if (data.roomCode) {
-    roomCode      = data.roomCode;
-    participantId = data.participantId;
-    isHost        = data.isHost ?? false;
-    isInRoom      = true;
-
-    injectOverlay();
-    startVideoObserver();
-    startAdDetection();
-
-    if (isHost) {
-      startDriftHeartbeat();
-    } else {
-      const banner = document.getElementById('tog-sync-banner');
-      if (banner) banner.classList.remove('hidden');
-    }
-
-    // Ask for fresh state from host
-    sendWS({ type: 'state-request' });
-
-    log('Restored session for room', roomCode, 'isHost:', isHost);
+  if (data && data.roomCode) {
+    initRoom(data);
+  } else {
+    chrome.storage.local.get(['roomCode', 'participantId', 'isHost'], (locData) => {
+      if (locData && locData.roomCode) {
+        initRoom(locData);
+      }
+    });
   }
 });

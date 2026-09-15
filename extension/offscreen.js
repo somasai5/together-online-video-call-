@@ -27,6 +27,10 @@ const MAX_RECONNECT_DELAY = 30_000;
 // Pending messages queued while WS is connecting
 const sendQueue = [];
 
+// Ping interval to keep Render's load balancer from killing idle connections
+let pingInterval = null;
+const PING_INTERVAL_MS = 25_000;
+
 // ─── WebSocket management ─────────────────────────────────────────────────────
 
 function connect() {
@@ -48,6 +52,14 @@ function connect() {
       ws.send(JSON.stringify(msg));
     }
 
+    // Keep-alive ping — prevents Render's LB from closing idle connections
+    clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, PING_INTERVAL_MS);
+
     toBackground({ type: 'ws-status', status: 'connected' });
   });
 
@@ -62,6 +74,7 @@ function connect() {
 
   ws.addEventListener('close', (event) => {
     console.warn('[Offscreen] WebSocket closed', event.code, event.reason);
+    clearInterval(pingInterval);
     toBackground({ type: 'ws-status', status: 'disconnected' });
 
     if (!isIntentionalClose) {
@@ -120,6 +133,12 @@ chrome.runtime.onMessage.addListener((message) => {
       break;
     case 'ws-send':
       sendToServer(message.payload);
+      break;
+    case 'get-status':
+      toBackground({
+        type: 'ws-status',
+        status: (ws && ws.readyState === WebSocket.OPEN) ? 'connected' : 'disconnected'
+      });
       break;
     default:
       // Unknown — ignore
