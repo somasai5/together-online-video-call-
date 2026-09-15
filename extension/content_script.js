@@ -1570,13 +1570,10 @@ function sendToBridge(payload) {
   if (frame && frame.contentWindow) {
     try {
       frame.contentWindow.postMessage({ ...payload, source: 'together_content' }, '*');
-    } catch {}
-  }
-  try {
-    if (chrome.runtime?.id) {
-      chrome.runtime.sendMessage({ ...payload, source: 'content_script' }).catch(() => {});
+    } catch (err) {
+      log('sendToBridge error:', err);
     }
-  } catch {}
+  }
 }
 
 function handleBridgeMessage(data) {

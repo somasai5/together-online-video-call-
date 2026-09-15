@@ -3,6 +3,7 @@
  *
  * Runs inside the extension iframe (chrome-extension://.../webrtc_bridge.html).
  * Bypasses host streaming page Content Security Policy (CSP) completely.
+ * Implements W3C Perfect Negotiation to prevent glare / duplicate collision.
  */
 
 'use strict';
@@ -36,17 +37,22 @@ let pendingOffer = null;
 let pendingIceCandidates = [];
 let isHost = false;
 
+// Perfect negotiation state variables
+let makingOffer = false;
+let ignoreOffer = false;
+let isSettingRemoteAnswerPending = false;
+
 function log(...args) {
   console.log('[Together-Bridge]', ...args);
 }
 
+// Single-channel communication with parent content script (NO chrome.runtime duplicate loops)
 function notifyContent(payload) {
   try {
-    chrome.runtime.sendMessage({ ...payload, source: 'webrtc_bridge' }).catch(() => {});
-  } catch {}
-  try {
     window.parent.postMessage({ ...payload, source: 'webrtc_bridge' }, '*');
-  } catch {}
+  } catch (err) {
+    log('notifyContent error:', err);
+  }
 }
 
 function sendWS(payload) {
@@ -159,8 +165,8 @@ function showRemoteStream(stream) {
 // ─── Peer Connection ──────────────────────────────────────────────────────────
 
 async function setupPeerConnection() {
-  if (pc) {
-    try { pc.close(); } catch {}
+  if (pc && pc.signalingState !== 'closed') {
+    return pc;
   }
 
   pc = new RTCPeerConnection({
@@ -245,12 +251,16 @@ async function setupPeerConnection() {
 }
 
 async function startCall() {
+  if (makingOffer) return;
+  makingOffer = true;
   log('Bridge starting call...');
+
   try {
     localStream = await getLocalMediaStream();
   } catch (err) {
     log('Bridge getLocalMediaStream failed:', err);
     notifyContent({ type: 'bridge-error', message: 'Camera/Microphone permission denied.' });
+    makingOffer = false;
     return;
   }
 
@@ -258,6 +268,10 @@ async function startCall() {
   await setupPeerConnection();
 
   try {
+    if (pc.signalingState !== 'stable') {
+      log('Cannot create offer: signalingState is', pc.signalingState);
+      return;
+    }
     const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     await pc.setLocalDescription(offer);
     sendWS({ type: 'offer', sdp: { type: offer.type, sdp: offer.sdp } });
@@ -265,11 +279,16 @@ async function startCall() {
     notifyContent({ type: 'bridge-status', status: 'calling' });
   } catch (err) {
     log('Bridge offer creation failed:', err);
+  } finally {
+    makingOffer = false;
   }
 }
 
 async function answerCall(offerMessage) {
+  const offer = offerMessage || pendingOffer;
+  if (!offer) return;
   pendingOffer = null;
+
   log('Bridge answering call...');
   try {
     localStream = await getLocalMediaStream();
@@ -281,7 +300,7 @@ async function answerCall(offerMessage) {
   await setupPeerConnection();
 
   try {
-    const sdpObj = offerMessage.sdp?.sdp ? offerMessage.sdp : { type: offerMessage.sdp?.type || 'offer', sdp: offerMessage.sdp?.sdp || offerMessage.sdp };
+    const sdpObj = offer.sdp?.sdp ? offer.sdp : { type: offer.sdp?.type || 'offer', sdp: offer.sdp?.sdp || offer.sdp };
     await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
     await flushIceCandidates();
     const answer = await pc.createAnswer();
@@ -296,7 +315,27 @@ async function answerCall(offerMessage) {
 
 async function handleIncomingOffer(message) {
   log('Bridge received incoming offer');
+  const isPolite = !isHost;
+  const readyForOffer = !makingOffer && (pc === null || pc.signalingState === 'stable' || isSettingRemoteAnswerPending);
+  const offerCollision = !readyForOffer;
+
+  ignoreOffer = !isPolite && offerCollision;
+  if (ignoreOffer) {
+    log('Glare detected: Impolite host ignoring guest offer');
+    return;
+  }
+
   pendingOffer = message;
+
+  if (offerCollision && isPolite && pc && pc.signalingState !== 'closed') {
+    try {
+      await pc.setLocalDescription({ type: 'rollback' });
+      log('Polite peer rolled back local offer');
+    } catch (e) {
+      log('Rollback error:', e);
+    }
+  }
+
   if (localStream && localStream.getTracks().some((t) => t.readyState === 'live')) {
     await answerCall(message);
   } else {
@@ -305,15 +344,27 @@ async function handleIncomingOffer(message) {
 }
 
 async function handleIncomingAnswer(message) {
-  if (!pc) return;
+  if (!pc || pc.signalingState === 'closed') return;
+  if (pc.signalingState === 'stable') {
+    log('Ignoring duplicate answer SDP: connection is already stable');
+    return;
+  }
+  if (pc.signalingState !== 'have-local-offer') {
+    log('Ignoring answer SDP in state:', pc.signalingState);
+    return;
+  }
+
   try {
+    isSettingRemoteAnswerPending = true;
     const sdpObj = message.sdp?.sdp ? message.sdp : { type: message.sdp?.type || 'answer', sdp: message.sdp?.sdp || message.sdp };
     await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
     await flushIceCandidates();
-    log('Bridge remote answer applied');
+    log('Bridge remote answer applied successfully');
     notifyContent({ type: 'bridge-status', status: 'connected' });
   } catch (err) {
     log('Bridge handle answer error:', err);
+  } finally {
+    isSettingRemoteAnswerPending = false;
   }
 }
 
@@ -329,7 +380,9 @@ async function handleIncomingIce(message) {
   try {
     await pc.addIceCandidate(new RTCIceCandidate(cand));
   } catch (e) {
-    log('Bridge ICE candidate error:', e);
+    if (!ignoreOffer) {
+      log('Bridge ICE candidate error:', e);
+    }
   }
 }
 
@@ -360,6 +413,9 @@ function endCall(notify = true) {
   remoteStream = null;
   pendingIceCandidates = [];
   pendingOffer = null;
+  makingOffer = false;
+  ignoreOffer = false;
+  isSettingRemoteAnswerPending = false;
   showLocalStream(null);
   showRemoteStream(null);
   notifyContent({ type: 'bridge-status', status: 'ended' });
@@ -398,8 +454,7 @@ function handleIncomingBridgeMessage(data) {
       startCall();
       break;
     case 'answer-call':
-      if (pendingOffer) answerCall(pendingOffer);
-      else startCall();
+      answerCall(data.offer || pendingOffer);
       break;
     case 'end-call':
       endCall(data.notify ?? true);
@@ -441,17 +496,10 @@ function unlockAudio() {
   if (video && video.srcObject && video.paused) video.play().catch(() => {});
 }
 
-// Listen to postMessage from parent content script
+// Listen to postMessage from parent content script (Single Source of Truth)
 window.addEventListener('message', (event) => {
   if (event.data && event.data.source === 'together_content') {
     handleIncomingBridgeMessage(event.data);
-  }
-});
-
-// Listen to chrome.runtime messages
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.source === 'content_script' || message.source === 'background' || message._fromServer) {
-    handleIncomingBridgeMessage(message);
   }
 });
 
