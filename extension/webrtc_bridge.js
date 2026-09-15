@@ -9,14 +9,31 @@
 'use strict';
 
 const ICE_SERVERS = [
+  // STUN servers (direct connection attempt first)
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'stun:global.stun.twilio.com:3478' },
-  { urls: 'stun:stun.services.mozilla.com' },
+  { urls: 'stun:global.relay.metered.ca:80' },
+  // TURN relay servers — required for Symmetric NAT / CGNAT (Indian ISPs)
+  {
+    urls: 'turn:global.relay.metered.ca:80',
+    username: 'a48b4e4fe4f5b16ab8de4b1d',
+    credential: 'KB/A71Ap9QU/6YPY',
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+    username: 'a48b4e4fe4f5b16ab8de4b1d',
+    credential: 'KB/A71Ap9QU/6YPY',
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:443',
+    username: 'a48b4e4fe4f5b16ab8de4b1d',
+    credential: 'KB/A71Ap9QU/6YPY',
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:443?transport=tcp',
+    username: 'a48b4e4fe4f5b16ab8de4b1d',
+    credential: 'KB/A71Ap9QU/6YPY',
+  },
 ];
 
 let pc = null;
