@@ -87,15 +87,15 @@ const ICE_SERVERS = [
 
 ---
 
-## 👫 Sharing with Your Partner (Cross-Computer Setup)
+## 👫 Sharing with Your friend (Cross-Computer Setup)
 
 The cloud signaling server is already live at `wss://together-online-video-call.onrender.com`. You can connect with your partner from anywhere in the world in under a minute!
 
-### Step 1: Send the Extension to Your Partner
+### Step 1: Send the Extension to Your friend
 Send them the `together-extension.zip` file (or zip the `extension/` folder).
 
-### Step 2: Install on Your Partner's Computer
-1. Have your partner extract `together-extension.zip` to a folder (e.g. on Desktop).
+### Step 2: Install on Your friend's Computer
+1. Have your friend extract `together-extension.zip` to a folder (e.g. on Desktop).
 2. In Google Chrome (or Edge/Brave), open `chrome://extensions`.
 3. Turn on the **Developer mode** toggle in the top-right corner.
 4. Click **Load unpacked** (top-left) and select the extracted `extension` folder.

@@ -14,7 +14,7 @@
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-/** Public STUN and free global TURN relay servers for reliable cross-network P2P WebRTC */
+/** Public STUN servers for reliable P2P WebRTC NAT traversal */
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -22,22 +22,6 @@ const ICE_SERVERS = [
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
   { urls: 'stun:global.stun.twilio.com:3478' },
-  { urls: 'stun:openrelay.metered.ca:80' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
 ];
 
 const DRIFT_HEARTBEAT_INTERVAL_MS = 1000;   // 1s smooth heartbeat (prevents network / buffer flooding)
@@ -1614,25 +1598,19 @@ async function getLocalMediaStream() {
   }
   try {
     return await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 }, frameRate: { ideal: 24, max: 30 } },
+      video: { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' },
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   } catch (err) {
-    log('getUserMedia standard failed, trying minimal video:', err);
+    log('getUserMedia (audio+video HD) failed, trying standard video:', err);
     try {
       return await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 } },
         audio: false,
       });
     } catch (e2) {
       log('getUserMedia video-only failed, trying audio only:', e2);
-      try {
-        return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-      } catch (e3) {
-        log('getUserMedia failed completely:', e3);
-        showChatToast('⚠️ Please allow Camera & Mic in Chrome permissions');
-        throw new Error('Camera/Microphone permission required. Click the lock/tune icon in the address bar to allow.');
-      }
+      return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
     }
   }
 }
@@ -1642,10 +1620,7 @@ async function setupPeerConnection() {
     try { pc.close(); } catch {}
   }
 
-  pc = new RTCPeerConnection({
-    iceServers: ICE_SERVERS,
-    iceTransportPolicy: 'all',
-  });
+  pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
   if (localStream) {
     localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
@@ -1678,18 +1653,6 @@ async function setupPeerConnection() {
         usernameFragment: e.candidate.usernameFragment,
       };
       sendWS({ type: 'ice-candidate', candidate: cand });
-    }
-  });
-
-  pc.addEventListener('iceconnectionstatechange', () => {
-    log('ICE Connection state:', pc.iceConnectionState);
-    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-      log('P2P / Relay media connection established successfully!');
-    } else if (pc.iceConnectionState === 'failed') {
-      log('ICE connection failed, attempting ICE restart...');
-      try {
-        if (typeof pc.restartIce === 'function') pc.restartIce();
-      } catch {}
     }
   });
 

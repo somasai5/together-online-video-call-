@@ -1,0 +1,978 @@
+/* ── Together Overlay CSS — Modern Glassmorphic Floating PiP & Pop-up Layout ──
+   Loaded as a web_accessible_resource and injected by content_script.js.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ── Custom Design Tokens ─────────────────────────────────────────────────── */
+#together-overlay-root {
+  --tog-bg: rgba(13, 10, 28, 0.90);
+  --tog-surface: rgba(24, 20, 48, 0.92);
+  --tog-surface-2: rgba(36, 31, 66, 0.95);
+  --tog-surface-hover: rgba(56, 48, 96, 0.95);
+  --tog-border: rgba(88, 76, 140, 0.45);
+  --tog-border-light: rgba(139, 92, 246, 0.4);
+  --tog-accent: #7c3aed;
+  --tog-accent-light: #a78bfa;
+  --tog-accent-glow: rgba(124, 58, 237, 0.45);
+  --tog-text: #f8fafc;
+  --tog-text-muted: #94a3b8;
+  --tog-green: #10b981;
+  --tog-green-glow: rgba(16, 185, 129, 0.4);
+  --tog-red: #f43f5e;
+  --tog-red-glow: rgba(244, 63, 94, 0.4);
+  --tog-amber: #f59e0b;
+  --tog-radius-lg: 16px;
+  --tog-radius-md: 10px;
+  --tog-radius-sm: 6px;
+  --tog-radius-pill: 9999px;
+  --tog-shadow-lg: 0 16px 45px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--tog-border);
+  --tog-shadow-glow: 0 0 25px var(--tog-accent-glow);
+  --tog-transition: 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--tog-text);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Root Container ───────────────────────────────────────────────────────── */
+#together-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.hidden, #together-overlay-root .hidden {
+  display: none !important;
+}
+
+/* ── Floating Action Button (FAB / Docked Bubble) ─────────────────────────── */
+#tog-toggle-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  pointer-events: all;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #4c1d95 100%);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 30px var(--tog-accent-glow), 0 2px 10px rgba(0, 0, 0, 0.5);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+  z-index: 2147483646;
+}
+
+#tog-toggle-btn:hover {
+  transform: scale(1.08) translateY(-2px);
+  box-shadow: 0 12px 35px var(--tog-accent-glow), 0 4px 15px rgba(0, 0, 0, 0.6);
+}
+
+#tog-toggle-btn:active {
+  transform: scale(0.95);
+}
+
+#tog-toggle-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: #ffffff;
+}
+
+#tog-unread-badge,
+#tog-chat-unread-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  background: var(--tog-red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--tog-bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  animation: tog-badge-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes tog-badge-pop {
+  0% { transform: scale(0); }
+  100% { transform: scale(1); }
+}
+
+/* ── Top-Center Movie Switch Notification Banner ─────────────────────────── */
+#tog-movie-banner {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: all;
+  background: rgba(18, 14, 40, 0.94);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--tog-accent-light);
+  border-radius: var(--tog-radius-pill);
+  padding: 7px 14px 7px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), var(--tog-shadow-glow);
+  z-index: 2147483646;
+  animation: tog-banner-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tog-banner-slide-down {
+  from { opacity: 0; transform: translate(-50%, -20px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+#tog-movie-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tog-movie-text strong {
+  color: var(--tog-accent-light);
+  font-weight: 700;
+}
+
+.tog-movie-banner-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tog-btn-switch {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  color: #fff;
+  border: none;
+  border-radius: var(--tog-radius-pill);
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 10px var(--tog-green-glow);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+.tog-btn-switch:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px var(--tog-green-glow);
+}
+
+.tog-btn-dismiss {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--tog-text-muted);
+  border: none;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--tog-transition), color var(--tog-transition);
+}
+
+.tog-btn-dismiss:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+/* ── Top-Center Ad Break Notification Banner ─────────────────────────────── */
+#tog-ad-banner {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: all;
+  background: rgba(26, 18, 44, 0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--tog-amber);
+  border-radius: var(--tog-radius-pill);
+  padding: 7px 14px 7px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.75), 0 0 20px rgba(245, 158, 11, 0.35);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fef08a;
+  z-index: 2147483646;
+  animation: tog-banner-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#tog-ad-banner-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fef08a;
+  white-space: nowrap;
+}
+
+#tog-ad-action-btn {
+  background: linear-gradient(135deg, var(--tog-amber) 0%, #d97706 100%);
+  color: #1e1b4b;
+  border: none;
+  border-radius: var(--tog-radius-pill);
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.4);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+#tog-ad-action-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.6);
+}
+
+/* ── Top-Right Incoming Call Banner ───────────────────────────────────────── */
+#tog-call-banner {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  pointer-events: all;
+  background: rgba(16, 185, 129, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--tog-radius-md);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 10px 35px var(--tog-green-glow);
+  z-index: 2147483646;
+  animation: tog-call-shake 2s infinite ease-in-out;
+}
+
+@keyframes tog-call-shake {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.03); }
+}
+
+#tog-call-banner span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.tog-call-banner-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tog-action-btn {
+  border: none;
+  border-radius: var(--tog-radius-sm);
+  padding: 5px 12px;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+  transition: transform var(--tog-transition), background var(--tog-transition);
+}
+
+.tog-btn-answer {
+  background: #ffffff;
+  color: #065f46;
+}
+
+.tog-btn-answer:hover {
+  background: #f0fdf4;
+  transform: scale(1.06);
+}
+
+.tog-btn-decline {
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.tog-btn-decline:hover {
+  background: var(--tog-red);
+  border-color: var(--tog-red);
+}
+
+/* ── Autoplay Sync Banner ─────────────────────────────────────────────────── */
+#tog-sync-banner {
+  position: fixed;
+  bottom: 84px;
+  right: 24px;
+  pointer-events: all;
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #5b21b6 100%);
+  border: 1px solid var(--tog-accent-light);
+  border-radius: var(--tog-radius-pill);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 6px 25px var(--tog-accent-glow);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  z-index: 2147483646;
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+#tog-sync-banner:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 10px 30px var(--tog-accent-glow);
+}
+
+/* ── Playback Desync Prompt ──────────────────────────────────────────────── */
+#tog-desync-prompt {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: all;
+  background: rgba(244, 63, 94, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--tog-radius-pill);
+  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 30px var(--tog-red-glow);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  z-index: 2147483646;
+  transition: transform var(--tog-transition);
+}
+
+#tog-desync-prompt:hover { transform: translateX(-50%) translateY(-2px); }
+
+/* ─── FLOATING PICTURE-IN-PICTURE (PiP) COMPACT WIDGET ───────────────────── */
+#tog-pip-window {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 290px;
+  pointer-events: all;
+  background: var(--tog-bg);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid var(--tog-border-light);
+  border-radius: var(--tog-radius-lg);
+  box-shadow: var(--tog-shadow-lg), var(--tog-shadow-glow);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  z-index: 2147483645;
+  user-select: none;
+  transition: box-shadow var(--tog-transition), opacity var(--tog-transition);
+  animation: tog-pip-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tog-pip-pop {
+  from { opacity: 0; transform: scale(0.9) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ── PiP Header / Drag Handle ────────────────────────────────────────────── */
+#tog-pip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: var(--tog-surface);
+  border-top-left-radius: var(--tog-radius-lg);
+  border-top-right-radius: var(--tog-radius-lg);
+  border-bottom: 1px solid var(--tog-border);
+  cursor: grab;
+}
+
+#tog-pip-header:active {
+  cursor: grabbing;
+}
+
+.tog-pip-drag-handle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tog-text);
+  letter-spacing: 0.02em;
+}
+
+.tog-pip-drag-handle svg {
+  opacity: 0.6;
+}
+
+.tog-pip-logo-text {
+  font-weight: 800;
+  background: linear-gradient(135deg, #fff 0%, var(--tog-accent-light) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.tog-pip-room-pill {
+  background: rgba(124, 58, 237, 0.18);
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  border-radius: var(--tog-radius-pill);
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--tog-accent-light);
+  letter-spacing: 0.04em;
+}
+
+.tog-pip-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tog-pip-icon-btn {
+  position: relative;
+  background: transparent;
+  border: none;
+  color: var(--tog-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--tog-transition), color var(--tog-transition);
+}
+
+.tog-pip-icon-btn:hover {
+  background: var(--tog-surface-hover);
+  color: #fff;
+}
+
+.tog-pip-icon-btn.active {
+  background: rgba(124, 58, 237, 0.25);
+  color: var(--tog-accent-light);
+}
+
+/* ── Now Watching Compact Movie Bar ───────────────────────────────────────── */
+#tog-pip-movie-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(20, 16, 42, 0.95);
+  border-bottom: 1px solid var(--tog-border);
+  font-size: 11px;
+}
+
+#tog-pip-movie-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.tog-pip-movie-title {
+  color: var(--tog-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tog-pip-movie-title strong {
+  color: #fff;
+  font-weight: 700;
+}
+
+.tog-pip-switch-btn {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--tog-radius-sm);
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--tog-green-glow);
+  flex-shrink: 0;
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+.tog-pip-switch-btn:hover {
+  transform: scale(1.05);
+}
+
+/* ── Video Tiles & Resizing ──────────────────────────────────────────────── */
+#tog-webcam-section {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(10, 8, 22, 0.6);
+  transition: all var(--tog-transition);
+  align-items: center;
+}
+
+.tog-video-tile {
+  position: relative;
+  flex: 1;
+  aspect-ratio: 4/3;
+  border-radius: var(--tog-radius-md);
+  overflow: hidden;
+  background: var(--tog-surface-2);
+  border: 1px solid var(--tog-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform var(--tog-transition), border-color var(--tog-transition), flex var(--tog-transition);
+}
+
+.tog-video-tile:hover {
+  border-color: var(--tog-accent-light);
+  transform: scale(1.01);
+}
+
+.tog-video-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+#tog-local-video {
+  transform: scaleX(-1);
+}
+
+.tog-video-tile .tog-video-label {
+  position: absolute;
+  bottom: 5px;
+  left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  pointer-events: none;
+}
+
+.tog-video-tile .tog-cam-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: linear-gradient(135deg, var(--tog-surface-2) 0%, var(--tog-surface) 100%);
+  font-size: 11px;
+  color: var(--tog-text-muted);
+  font-weight: 600;
+}
+
+.tog-cam-placeholder svg {
+  opacity: 0.55;
+}
+
+/* ── Spotlight / Focused Video Modes ── */
+#tog-webcam-section.spotlight-remote #tog-remote-tile {
+  flex: 3.5;
+  aspect-ratio: 16/9;
+}
+#tog-webcam-section.spotlight-remote #tog-local-tile {
+  flex: 1;
+  max-width: 110px;
+  aspect-ratio: 4/3;
+}
+
+#tog-webcam-section.spotlight-local #tog-local-tile {
+  flex: 3.5;
+  aspect-ratio: 16/9;
+}
+#tog-webcam-section.spotlight-local #tog-remote-tile {
+  flex: 1;
+  max-width: 110px;
+  aspect-ratio: 4/3;
+}
+
+/* ── Corner Drag-to-Resize Handle ── */
+#tog-pip-resizer {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tog-text-muted);
+  opacity: 0.5;
+  transition: opacity 0.2s, color 0.2s;
+  z-index: 20;
+  user-select: none;
+}
+
+#tog-pip-resizer:hover {
+  opacity: 1;
+  color: var(--tog-accent-light);
+}
+
+/* ── PiP Toolbar ─────────────────────────────────────────────────────────── */
+#tog-pip-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: var(--tog-surface);
+  border-top: 1px solid var(--tog-border);
+}
+
+.tog-pip-media-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tog-ctrl-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--tog-border);
+  background: var(--tog-surface-2);
+  color: var(--tog-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--tog-transition), background var(--tog-transition), border-color var(--tog-transition);
+}
+
+.tog-ctrl-btn:hover {
+  transform: scale(1.1);
+  background: var(--tog-surface-hover);
+  border-color: var(--tog-border-light);
+}
+
+.tog-ctrl-btn:active {
+  transform: scale(0.95);
+}
+
+.tog-ctrl-btn.active {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: var(--tog-green);
+}
+
+.tog-ctrl-btn.active svg {
+  stroke: var(--tog-green);
+}
+
+.tog-ctrl-btn.muted {
+  background: rgba(244, 63, 94, 0.25);
+  border-color: var(--tog-red);
+}
+
+.tog-ctrl-btn.muted svg {
+  stroke: var(--tog-red);
+}
+
+.tog-ctrl-btn.tog-btn-call {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  border-color: var(--tog-green);
+}
+
+.tog-ctrl-btn.tog-btn-call svg {
+  stroke: #ffffff;
+}
+
+.tog-ctrl-btn.tog-btn-call.active {
+  background: var(--tog-red) !important;
+  border-color: var(--tog-red) !important;
+}
+
+.tog-ctrl-btn.tog-btn-ringing {
+  background: rgba(16, 185, 129, 0.35);
+  border-color: var(--tog-green);
+  animation: tog-btn-ring-pulse 1s infinite alternate;
+}
+
+@keyframes tog-btn-ring-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 var(--tog-green-glow); }
+  100% { transform: scale(1.15); box-shadow: 0 0 15px 4px var(--tog-green-glow); }
+}
+
+.tog-ctrl-btn.tog-btn-ad {
+  font-size: 14px;
+}
+
+.tog-ctrl-btn.tog-btn-ad:hover {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: var(--tog-amber);
+}
+
+.tog-ctrl-btn.tog-btn-ad.active {
+  background: rgba(245, 158, 11, 0.35) !important;
+  border-color: var(--tog-amber) !important;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
+  animation: tog-ad-btn-pulse 1.5s infinite alternate ease-in-out;
+}
+
+@keyframes tog-ad-btn-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 6px rgba(245, 158, 11, 0.4); }
+  100% { transform: scale(1.1); box-shadow: 0 0 16px rgba(245, 158, 11, 0.7); }
+}
+
+/* ── Emoji Buttons in PiP Toolbar ────────────────────────────────────────── */
+.tog-pip-emoji-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tog-emoji-btn {
+  font-size: 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--tog-radius-sm);
+  padding: 3px 4px;
+  line-height: 1;
+  transition: transform var(--tog-transition), background var(--tog-transition);
+}
+
+.tog-emoji-btn:hover {
+  background: var(--tog-surface-hover);
+  transform: scale(1.25) translateY(-2px);
+}
+
+.tog-emoji-btn:active {
+  transform: scale(1.1);
+}
+
+/* ── Pop-up Expandable Chat Drawer ────────────────────────────────────────── */
+#tog-chat-popover {
+  display: flex;
+  flex-direction: column;
+  background: rgba(14, 11, 30, 0.98);
+  border-top: 1px solid var(--tog-border);
+  border-bottom-left-radius: var(--tog-radius-lg);
+  border-bottom-right-radius: var(--tog-radius-lg);
+  overflow: hidden;
+  max-height: 220px;
+  animation: tog-popover-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tog-popover-in {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 220px; }
+}
+
+#tog-chat-messages {
+  height: 130px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tog-border) transparent;
+}
+
+#tog-chat-messages::-webkit-scrollbar { width: 3px; }
+#tog-chat-messages::-webkit-scrollbar-thumb { background: var(--tog-border); border-radius: 2px; }
+
+.tog-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: tog-msg-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tog-msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.tog-msg-meta {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--tog-text-muted);
+}
+
+.tog-msg-bubble {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+  max-width: 90%;
+}
+
+.tog-msg.mine {
+  align-self: flex-end;
+}
+.tog-msg.mine .tog-msg-meta { text-align: right; }
+.tog-msg.mine .tog-msg-bubble {
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #6d28d9 100%);
+  color: #fff;
+  border-bottom-right-radius: 2px;
+  box-shadow: 0 2px 10px rgba(124, 58, 237, 0.25);
+}
+
+.tog-msg.theirs {
+  align-self: flex-start;
+}
+.tog-msg.theirs .tog-msg-bubble {
+  background: var(--tog-surface-2);
+  color: var(--tog-text);
+  border-bottom-left-radius: 2px;
+  border: 1px solid var(--tog-border);
+}
+
+.tog-msg.system {
+  align-self: center;
+  width: 100%;
+}
+.tog-msg.system .tog-msg-bubble {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--tog-text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--tog-radius-pill);
+  font-size: 10px;
+  text-align: center;
+  max-width: 100%;
+  padding: 3px 8px;
+  margin: 1px 0;
+}
+
+/* ── Chat Input Row ───────────────────────────────────────────────────────── */
+#tog-chat-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--tog-surface);
+  border-top: 1px solid var(--tog-border);
+}
+
+#tog-chat-input {
+  flex: 1;
+  background: var(--tog-surface-2);
+  border: 1px solid var(--tog-border);
+  border-radius: var(--tog-radius-md);
+  padding: 6px 10px;
+  color: var(--tog-text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  resize: none;
+  min-height: 32px;
+  max-height: 60px;
+  line-height: 1.35;
+  transition: border-color var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+#tog-chat-input:focus {
+  border-color: var(--tog-accent);
+  box-shadow: 0 0 0 2px var(--tog-accent-glow);
+}
+
+#tog-chat-input::placeholder {
+  color: var(--tog-text-muted);
+}
+
+#tog-send-btn {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--tog-radius-md);
+  background: linear-gradient(135deg, var(--tog-accent) 0%, #6d28d9 100%);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px var(--tog-accent-glow);
+  transition: transform var(--tog-transition);
+}
+
+#tog-send-btn:hover {
+  transform: scale(1.06);
+}
+
+#tog-send-btn:active {
+  transform: scale(0.92);
+}
+
+#tog-send-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2.5;
+}
+
+/* ── Transient Chat Toast ─────────────────────────────────────────────────── */
+#tog-chat-toast {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  max-width: 270px;
+  padding: 8px 14px;
+  background: rgba(22, 18, 48, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--tog-accent-light);
+  border-radius: var(--tog-radius-md);
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65), 0 0 15px var(--tog-accent-glow);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 2147483646;
+}
+
+#tog-chat-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Floating Emoji Particles ────────────────────────────────────────────── */
+.tog-emoji-float {
+  position: fixed;
+  font-size: 32px;
+  pointer-events: none;
+  z-index: 2147483646;
+  animation: tog-emoji-float-up 2.2s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+  user-select: none;
+}
+
+@keyframes tog-emoji-float-up {
+  0%   { opacity: 1; transform: translateY(0) scale(0.6) rotate(0deg); }
+  30%  { opacity: 1; transform: translateY(-70px) scale(1.3) rotate(-8deg); }
+  70%  { opacity: 0.9; transform: translateY(-160px) scale(1.1) rotate(6deg); }
+  100% { opacity: 0; transform: translateY(-240px) scale(0.7) rotate(0deg); }
+}
