@@ -80,7 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === 'get-room-state') {
       const tabId = sender.tab?.id;
       if (tabId) {
-        chrome.storage.session.get(['roomCode', 'participantId', 'isHost'], (data) => {
+        chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'movieUrl', 'movieTitle'], (data) => {
           if (data && data.roomCode) {
             chrome.tabs.sendMessage(tabId, { ...data, type: 'room-state', source: 'background' }).catch(() => {});
           }
@@ -121,22 +121,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     // Broadcast to all Hotstar tabs
-    chrome.tabs.query({}, (tabs) => {
+    chrome.tabs.query({}, async (tabs) => {
+      if (!tabs) return;
       for (const tab of tabs) {
         if (tab.id === undefined || tab.id < 0) continue;
         if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) continue;
 
-        chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {
-          // If tab was opened before extension reloaded, auto-inject content_script.js
-          if (type === 'room-created' || type === 'joined' || type === 'reconnected') {
-            if (tab.url && (tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com'))) {
-              chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                files: ['content_script.js'],
-              }).catch(() => {});
-            }
+        const isHotstar = tab.url && (tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com'));
+        if (!isHotstar) continue;
+
+        try {
+          await chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' });
+        } catch {
+          // If tab was opened before extension reloaded or script not attached, auto-inject
+          if (type === 'room-created' || type === 'joined' || type === 'reconnected' || type === 'room-state') {
+            try {
+              await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['overlay.css'] });
+              await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content_script.js'] });
+              setTimeout(() => {
+                chrome.tabs.sendMessage(tab.id, { ...message, source: 'background' }).catch(() => {});
+              }, 120);
+            } catch {}
           }
-        });
+        }
       }
     });
 
@@ -154,14 +161,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-// ─── Reset stale room state on extension reload / startup ─────────────────────
+// ─── Reset stale room state on clean install / update ────────────────────────
 
 function resetRoomStorage() {
   try {
     chrome.storage.session?.clear?.().catch?.(() => {});
   } catch {}
   try {
-    chrome.storage.local?.remove?.(['roomCode', 'participantId', 'isHost', 'peerConnected']).catch?.(() => {});
+    chrome.storage.local?.remove?.(['roomCode', 'participantId', 'isHost', 'peerConnected', 'movieUrl', 'movieTitle']).catch?.(() => {});
   } catch {}
 
   // Broadcast to all open tabs so existing content scripts clean up immediately
@@ -174,14 +181,7 @@ function resetRoomStorage() {
   });
 }
 
-// Reset immediately on background service worker reload
-resetRoomStorage();
-
 chrome.runtime.onInstalled.addListener(() => {
-  resetRoomStorage();
-});
-
-chrome.runtime.onStartup.addListener(() => {
   resetRoomStorage();
 });
 

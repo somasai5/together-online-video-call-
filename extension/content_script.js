@@ -109,24 +109,29 @@ function log(...args) {
 // ─── Overlay injection ────────────────────────────────────────────────────────
 
 function injectOverlay() {
-  if (document.getElementById('together-overlay-root')) return;
+  const existing = document.getElementById('together-overlay-root');
+  if (existing) {
+    existing.remove();
+  }
 
-  // Load overlay CSS from web_accessible_resources (avoids CSP issues)
-  const link = document.createElement('link');
-  link.rel  = 'stylesheet';
-  link.href = chrome.runtime.getURL('overlay.css');
-  document.head.appendChild(link);
+  // Ensure overlay CSS stylesheet is linked
+  if (!document.getElementById('together-overlay-css')) {
+    const link = document.createElement('link');
+    link.id   = 'together-overlay-css';
+    link.rel  = 'stylesheet';
+    link.href = chrome.runtime.getURL('overlay.css');
+    (document.head || document.documentElement).appendChild(link);
+  }
 
   overlayRoot = document.createElement('div');
   overlayRoot.id = 'together-overlay-root';
   overlayRoot.innerHTML = buildOverlayHTML();
 
-  // Inject into the page body initially; fullscreen handler will reparent if needed
-  document.body.appendChild(overlayRoot);
+  (document.body || document.documentElement).appendChild(overlayRoot);
 
   attachOverlayListeners();
   makePipDraggable();
-  log('Overlay injected with PiP and Drawer layout');
+  log('Overlay injected successfully with Watch Party panel');
 }
 
 let drawerOpen = true;
@@ -1318,6 +1323,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
   switch (message.type) {
     // ── Room state ─────────────────────────────────────────────────────────
+    case 'room-state':
     case 'room-created':
     case 'joined':
     case 'reconnected':
@@ -1641,7 +1647,11 @@ try {
     chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'movieUrl', 'movieTitle'], (data) => {
       if (chrome.runtime?.id && data && data.roomCode) {
         initRoom(data);
+      } else if (chrome.runtime?.id) {
+        sendToBackground({ type: 'get-room-state' });
       }
     });
+  } else if (chrome.runtime?.id) {
+    sendToBackground({ type: 'get-room-state' });
   }
 } catch {}

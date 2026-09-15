@@ -517,6 +517,9 @@
 }
 
 .tog-ctrl-btn.tog-btn-endcall svg {
+  stroke: #ffffff;
+}
+
 .tog-ctrl-btn.tog-btn-call {
   background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
   border-color: var(--tog-green);
