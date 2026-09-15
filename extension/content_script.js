@@ -64,10 +64,7 @@ let clockSyncSamples = [];
 let lastBroadcastUrl = null;
 let pendingMovieUrl  = null;
 
-let pc               = null;        // RTCPeerConnection
-let localStream      = null;
-let remoteStream     = null;
-let pendingOffer     = null;        // offer waiting for user interaction/answer
+let isCallActive     = false;
 
 let overlayRoot      = null;        // #together-overlay-root
 let panelVisible     = true;
@@ -245,24 +242,9 @@ function buildOverlayHTML() {
         </button>
       </div>
 
-      <!-- Dual Webcam Video Section (Supports Side-by-Side & Spotlight modes) -->
+      <!-- Dual Webcam Video Section (Hosted in Extension Iframe to bypass Hotstar CSP) -->
       <div id="tog-webcam-section">
-        <div class="tog-video-tile" id="tog-local-tile" title="Click to spotlight your camera">
-          <video id="tog-local-video" autoplay muted playsinline></video>
-          <div class="tog-cam-placeholder" id="tog-local-placeholder">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-            <span>You</span>
-          </div>
-          <span class="tog-video-label">You</span>
-        </div>
-        <div class="tog-video-tile" id="tog-remote-tile" title="Click to spotlight friend's camera">
-          <video id="tog-remote-video" autoplay playsinline></video>
-          <div class="tog-cam-placeholder" id="tog-remote-placeholder">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span>Friend</span>
-          </div>
-          <span class="tog-video-label">Friend</span>
-        </div>
+        <iframe id="tog-webcam-frame" src="${chrome.runtime.getURL('webrtc_bridge.html')}" allow="camera; microphone; autoplay"></iframe>
       </div>
 
       <!-- Quick Control Toolbar -->
@@ -627,18 +609,15 @@ function attachOverlayListeners() {
   });
 
   // Incoming call banner buttons
-  document.getElementById('tog-answer-call-btn')?.addEventListener('click', async () => {
+  document.getElementById('tog-answer-call-btn')?.addEventListener('click', () => {
     document.getElementById('tog-call-banner')?.classList.add('hidden');
     document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
-    if (pendingOffer) {
-      await answerCall(pendingOffer);
-    }
+    sendToBridge({ type: 'answer-call' });
   });
   document.getElementById('tog-decline-call-btn')?.addEventListener('click', () => {
     document.getElementById('tog-call-banner')?.classList.add('hidden');
     document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
-    pendingOffer = null;
-    sendWS({ type: 'call-ended' });
+    sendToBridge({ type: 'end-call', notify: true });
     appendChatMessage('Declined video call.', 'system');
   });
 
@@ -1584,382 +1563,127 @@ function spawnEmojiFloat(emoji) {
   el.addEventListener('animationend', () => el.remove());
 }
 
-// ─── WebRTC ───────────────────────────────────────────────────────────────────
+// ─── WebRTC Bridge Interface ──────────────────────────────────────────────────
 
-let pendingIceCandidates = [];
-
-async function handleCallToggle() {
-  if (pendingOffer) {
-    document.getElementById('tog-call-banner')?.classList.add('hidden');
-    document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
-    await answerCall(pendingOffer);
-    return;
-  }
-
-  if (pc && pc.connectionState === 'connected') {
-    endCall(true);
-  } else if (pc) {
-    endCall(true);
-  } else {
-    await startCall();
-  }
-}
-
-async function getLocalMediaStream() {
-  if (localStream && localStream.getTracks().some((t) => t.readyState === 'live')) {
-    return localStream;
-  }
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 }, frameRate: { ideal: 24, max: 30 } },
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
-  } catch (err) {
-    log('getUserMedia standard failed, trying minimal video:', err);
+function sendToBridge(payload) {
+  const frame = document.getElementById('tog-webcam-frame');
+  if (frame && frame.contentWindow) {
     try {
-      return await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false,
-      });
-    } catch (e2) {
-      log('getUserMedia video-only failed, trying audio only:', e2);
-      try {
-        return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-      } catch (e3) {
-        log('getUserMedia failed completely:', e3);
-        showChatToast('⚠️ Please allow Camera & Mic in Chrome permissions');
-        throw new Error('Camera/Microphone permission required. Click the lock/tune icon in the address bar to allow.');
-      }
-    }
+      frame.contentWindow.postMessage({ ...payload, source: 'together_content' }, '*');
+    } catch {}
   }
+  try {
+    if (chrome.runtime?.id) {
+      chrome.runtime.sendMessage({ ...payload, source: 'content_script' }).catch(() => {});
+    }
+  } catch {}
 }
 
-async function setupPeerConnection() {
-  if (pc) {
-    try { pc.close(); } catch {}
-  }
+function handleBridgeMessage(data) {
+  if (!data || typeof data !== 'object') return;
+  const { type } = data;
 
-  pc = new RTCPeerConnection({
-    iceServers: ICE_SERVERS,
-    iceTransportPolicy: 'all',
-    iceCandidatePoolSize: 10,
-    bundlePolicy: 'max-bundle',
-    rtcpMuxPolicy: 'require',
-  });
-
-  if (localStream) {
-    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-  }
-
-  // Ensure transceivers exist so both sides can receive video & audio tracks reliably
-  if (pc.addTransceiver) {
-    const senders = pc.getSenders();
-    if (!senders.some((s) => s.track && s.track.kind === 'audio')) {
-      try { pc.addTransceiver('audio', { direction: 'sendrecv' }); } catch {}
-    }
-    if (!senders.some((s) => s.track && s.track.kind === 'video')) {
-      try { pc.addTransceiver('video', { direction: 'sendrecv' }); } catch {}
-    }
-  }
-
-  pc.addEventListener('track', (e) => {
-    log('Remote track received:', e.track.kind, e.track.id);
-    if (e.streams && e.streams[0]) {
-      remoteStream = e.streams[0];
-    } else {
-      if (!remoteStream) remoteStream = new MediaStream();
-      if (!remoteStream.getTracks().some((t) => t.id === e.track.id)) {
-        remoteStream.addTrack(e.track);
+  switch (type) {
+    case 'ws-send':
+      if (data.payload) {
+        sendWS(data.payload);
       }
-    }
-    showRemoteStream(remoteStream);
+      break;
 
-    e.track.onunmute = () => {
-      log('Remote track unmuted:', e.track.kind);
-      showRemoteStream(remoteStream);
-    };
-
-    e.track.onmute = () => {
-      log('Remote track muted:', e.track.kind);
-    };
-  });
-
-  pc.addEventListener('icecandidate', (e) => {
-    if (e.candidate) {
-      const cand = e.candidate.toJSON ? e.candidate.toJSON() : {
-        candidate: e.candidate.candidate,
-        sdpMid: e.candidate.sdpMid,
-        sdpMLineIndex: e.candidate.sdpMLineIndex,
-        usernameFragment: e.candidate.usernameFragment,
-      };
-      sendWS({ type: 'ice-candidate', candidate: cand });
-    }
-  });
-
-  pc.addEventListener('iceconnectionstatechange', async () => {
-    log('ICE Connection state:', pc.iceConnectionState);
-    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-      log('P2P / Relay media connection established successfully!');
-    } else if (pc.iceConnectionState === 'failed') {
-      log('ICE connection failed, attempting ICE restart...');
-      try {
-        if (typeof pc.restartIce === 'function' && isHost) {
-          pc.restartIce();
-          const offer = await pc.createOffer({ iceRestart: true });
-          await pc.setLocalDescription(offer);
-          sendWS({ type: 'offer', sdp: { type: offer.type, sdp: offer.sdp } });
+    case 'bridge-status':
+      log('Bridge status update:', data.status);
+      if (data.status === 'calling') {
+        isCallActive = true;
+        const callBtn = document.getElementById('tog-call-btn');
+        if (callBtn) {
+          callBtn.classList.add('active');
+          callBtn.classList.remove('tog-btn-ringing');
+          callBtn.setAttribute('title', 'End Video Call');
         }
-      } catch (err) {
-        log('ICE restart error:', err);
+        appendChatMessage('Calling friend...', 'system');
+      } else if (data.status === 'connected') {
+        isCallActive = true;
+        const callBtn = document.getElementById('tog-call-btn');
+        if (callBtn) {
+          callBtn.classList.add('active');
+          callBtn.classList.remove('tog-btn-ringing');
+          callBtn.setAttribute('title', 'End Video Call');
+        }
+        document.getElementById('tog-call-banner')?.classList.add('hidden');
+        appendChatMessage('Video call connected!', 'system');
+      } else if (data.status === 'incoming-offer') {
+        document.getElementById('tog-call-banner')?.classList.remove('hidden');
+        document.getElementById('tog-call-btn')?.classList.add('tog-btn-ringing');
+        appendChatMessage('📞 Friend is calling you... Click "Answer" or the Call button to connect video.', 'system');
+      } else if (data.status === 'ended' || data.status === 'disconnected') {
+        isCallActive = false;
+        const callBtn = document.getElementById('tog-call-btn');
+        if (callBtn) {
+          callBtn.classList.remove('active');
+          callBtn.classList.remove('tog-btn-ringing');
+          callBtn.setAttribute('title', 'Start Video Call');
+        }
+        document.getElementById('tog-cam-btn')?.classList.remove('muted');
+        document.getElementById('tog-mute-btn')?.classList.remove('muted');
+        document.getElementById('tog-call-banner')?.classList.add('hidden');
+        if (data.status === 'disconnected') {
+          appendChatMessage('Video call disconnected.', 'system');
+        }
       }
-    }
-  });
+      break;
 
-  pc.addEventListener('connectionstatechange', () => {
-    log('WebRTC connection state:', pc.connectionState);
-    if (pc.connectionState === 'connected') {
-      appendChatMessage('Video call connected!', 'system');
-      document.getElementById('tog-call-btn')?.classList.add('active');
-      document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
-    } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-      appendChatMessage('Video call disconnected.', 'system');
-      document.getElementById('tog-call-btn')?.classList.remove('active');
-    }
-  });
+    case 'bridge-mute-status':
+      document.getElementById('tog-mute-btn')?.classList.toggle('muted', !data.enabled);
+      showChatToast(data.enabled ? '🎤 Microphone unmuted' : '🔇 Microphone muted');
+      break;
 
-  return pc;
-}
+    case 'bridge-cam-status':
+      document.getElementById('tog-cam-btn')?.classList.toggle('muted', !data.enabled);
+      showChatToast(data.enabled ? '📹 Camera turned on' : '📷 Camera turned off');
+      break;
 
-async function startCall() {
-  log('Starting WebRTC call...');
+    case 'bridge-toast':
+      if (data.message) showChatToast(data.message);
+      break;
 
-  try {
-    localStream = await getLocalMediaStream();
-  } catch (err) {
-    log('getUserMedia failed:', err);
-    appendChatMessage('Could not access camera/mic: ' + (err.message || 'Permission denied'), 'system');
-    return;
-  }
-
-  showLocalStream(localStream);
-  await setupPeerConnection();
-
-  try {
-    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-    await pc.setLocalDescription(offer);
-    sendWS({
-      type: 'offer',
-      sdp: { type: offer.type, sdp: offer.sdp },
-    });
-    log('Offer sent');
-    appendChatMessage('Calling friend...', 'system');
-    const callBtn = document.getElementById('tog-call-btn');
-    if (callBtn) {
-      callBtn.classList.add('active');
-      callBtn.setAttribute('title', 'End Video Call');
-    }
-  } catch (err) {
-    log('Failed to create offer:', err);
+    case 'bridge-error':
+      if (data.message) {
+        appendChatMessage(data.message, 'system');
+        showChatToast(`⚠️ ${data.message}`);
+      }
+      break;
   }
 }
 
-function endCall(notifyPeer = true) {
-  if (pc) {
-    try { pc.close(); } catch {}
-    pc = null;
+// Listen to postMessage from the WebRTC bridge iframe
+window.addEventListener('message', (event) => {
+  if (event.data && event.data.source === 'webrtc_bridge') {
+    handleBridgeMessage(event.data);
   }
-  if (localStream) {
-    localStream.getTracks().forEach((t) => t.stop());
-    localStream = null;
-  }
-  remoteStream = null;
-  pendingIceCandidates = [];
-  pendingOffer = null;
-  showLocalStream(null);
-  showRemoteStream(null);
+});
 
+function handleCallToggle() {
   const callBtn = document.getElementById('tog-call-btn');
-  if (callBtn) {
-    callBtn.classList.remove('active');
+  if (callBtn && callBtn.classList.contains('tog-btn-ringing')) {
+    document.getElementById('tog-call-banner')?.classList.add('hidden');
     callBtn.classList.remove('tog-btn-ringing');
-    callBtn.setAttribute('title', 'Start Video Call');
-  }
-  document.getElementById('tog-cam-btn')?.classList.remove('active');
-  document.getElementById('tog-mute-btn')?.classList.remove('active');
-  document.getElementById('tog-call-banner')?.classList.add('hidden');
-  log('Call ended');
-
-  if (notifyPeer) {
-    sendWS({ type: 'call-ended' });
-  }
-}
-
-function showLocalStream(stream) {
-  const video       = document.getElementById('tog-local-video');
-  const placeholder = document.getElementById('tog-local-placeholder');
-  if (!video) return;
-
-  if (stream && stream.getTracks().length > 0) {
-    if (video.srcObject !== stream) {
-      video.srcObject = stream;
-    }
-    video.muted = true;
-    video.play().catch(() => {});
-    if (placeholder) placeholder.style.display = 'none';
-    video.style.display = 'block';
-  } else {
-    video.srcObject = null;
-    if (placeholder) placeholder.style.display = '';
-    video.style.display = 'none';
-  }
-}
-
-let remoteAudioEl = null;
-
-function ensureRemoteAudio(stream) {
-  try {
-    if (!remoteAudioEl || !remoteAudioEl.isConnected) {
-      let existing = document.getElementById('tog-remote-audio');
-      if (existing) {
-        remoteAudioEl = existing;
-      } else {
-        remoteAudioEl = document.createElement('audio');
-        remoteAudioEl.id = 'tog-remote-audio';
-        remoteAudioEl.autoplay = true;
-        remoteAudioEl.playsInline = true;
-        (document.body || document.documentElement).appendChild(remoteAudioEl);
-      }
-    }
-
-    if (stream && stream.getAudioTracks().length > 0) {
-      if (remoteAudioEl.srcObject !== stream) {
-        remoteAudioEl.srcObject = stream;
-      }
-      remoteAudioEl.muted = false;
-      remoteAudioEl.volume = 1.0;
-      const playPromise = remoteAudioEl.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          log('Remote audio autoplay blocked by Chrome policy, waiting for user gesture:', err);
-          const resumeAudio = () => {
-            if (remoteAudioEl && remoteAudioEl.srcObject) {
-              remoteAudioEl.muted = false;
-              remoteAudioEl.play().catch(() => {});
-            }
-            document.removeEventListener('click', resumeAudio);
-            document.removeEventListener('keydown', resumeAudio);
-          };
-          document.addEventListener('click', resumeAudio, { once: true });
-          document.addEventListener('keydown', resumeAudio, { once: true });
-        });
-      }
-    } else if (remoteAudioEl) {
-      remoteAudioEl.srcObject = null;
-    }
-  } catch (e) {
-    log('ensureRemoteAudio error:', e);
-  }
-}
-
-function showRemoteStream(stream) {
-  const video       = document.getElementById('tog-remote-video');
-  const placeholder = document.getElementById('tog-remote-placeholder');
-  if (!video) return;
-
-  // Route incoming audio to dedicated high-priority audio pipeline
-  ensureRemoteAudio(stream);
-
-  if (!stream || stream.getTracks().length === 0) {
-    video.srcObject = null;
-    if (placeholder) placeholder.style.display = '';
-    video.style.display = 'none';
+    sendToBridge({ type: 'answer-call' });
     return;
   }
 
-  if (video.srcObject !== stream) {
-    video.srcObject = stream;
+  if (isCallActive) {
+    sendToBridge({ type: 'end-call', notify: true });
+  } else {
+    sendToBridge({ type: 'start-call' });
   }
-
-  video.autoplay = true;
-  video.playsInline = true;
-  video.muted = true; // Video element is muted so audio doesn't double with remoteAudioEl
-
-  const checkVideoTrack = () => {
-    const vTracks = stream.getVideoTracks();
-    const hasLiveVideo = vTracks.length > 0 && vTracks.some((t) => t.enabled && t.readyState === 'live');
-    if (placeholder) placeholder.style.display = hasLiveVideo ? 'none' : '';
-    video.style.display = hasLiveVideo ? 'block' : 'none';
-    if (hasLiveVideo) {
-      video.play().catch(() => {});
-    }
-  };
-
-  checkVideoTrack();
-
-  stream.onaddtrack = checkVideoTrack;
-  stream.onremovetrack = checkVideoTrack;
-  stream.getVideoTracks().forEach((track) => {
-    track.onunmute = () => {
-      log('Remote video track onunmute fired');
-      checkVideoTrack();
-    };
-    track.onmute = () => {
-      log('Remote video track onmute fired');
-      checkVideoTrack();
-    };
-    track.onended = checkVideoTrack;
-  });
-
-  video.onloadedmetadata = () => {
-    log('Remote video loadedmetadata:', video.videoWidth, 'x', video.videoHeight);
-    checkVideoTrack();
-  };
-  video.oncanplay = () => {
-    video.play().catch(() => {});
-  };
 }
-
-// Global click listener to unlock any blocked audio/video elements due to browser autoplay policies
-if (!window._togAutoplayUnlockHooked) {
-  window._togAutoplayUnlockHooked = true;
-  document.addEventListener('click', () => {
-    if (remoteAudioEl && remoteAudioEl.srcObject && remoteAudioEl.paused) {
-      remoteAudioEl.play().catch(() => {});
-    }
-    const rVideo = document.getElementById('tog-remote-video');
-    if (rVideo && rVideo.srcObject && rVideo.paused) {
-      rVideo.play().catch(() => {});
-    }
-  }, { capture: true });
-}
-
-// ─── Mute / cam toggles ───────────────────────────────────────────────────────
 
 function handleMuteToggle() {
-  if (!localStream) return;
-  const audioTracks = localStream.getAudioTracks();
-  if (!audioTracks.length) return;
-
-  const isEnabled = !audioTracks[0].enabled;
-  audioTracks.forEach((t) => { t.enabled = isEnabled; });
-  document.getElementById('tog-mute-btn')?.classList.toggle('muted', !isEnabled);
-  showChatToast(isEnabled ? '🎤 Microphone unmuted' : '🔇 Microphone muted');
+  sendToBridge({ type: 'toggle-mute' });
 }
 
 function handleCamToggle() {
-  if (!localStream) return;
-  const track = localStream.getVideoTracks()[0];
-  if (!track) return;
-
-  track.enabled = !track.enabled;
-  document.getElementById('tog-cam-btn').classList.toggle('muted', !track.enabled);
-
-  const placeholder = document.getElementById('tog-local-placeholder');
-  const video       = document.getElementById('tog-local-video');
-  if (placeholder && video) {
-    placeholder.style.display = track.enabled ? 'none' : '';
-    video.style.display       = track.enabled ? 'block' : 'none';
-  }
+  sendToBridge({ type: 'toggle-cam' });
 }
 
 // ─── Fullscreen handling ──────────────────────────────────────────────────────
@@ -2005,6 +1729,8 @@ chrome.runtime.onMessage.addListener((message) => {
       startVideoObserver();
       startMovieSyncMonitor();
 
+      sendToBridge({ type: 'set-role', isHost });
+
       if (isHost) {
         startDriftHeartbeat();
         broadcastMovieUrlIfNeeded(true);
@@ -2025,6 +1751,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case 'you-are-host':
       isHost = true;
+      sendToBridge({ type: 'set-role', isHost: true });
       if (clockSyncInterval) {
         clearInterval(clockSyncInterval);
         clockSyncInterval = null;
@@ -2074,7 +1801,7 @@ chrome.runtime.onMessage.addListener((message) => {
       if (syncBanner) syncBanner.remove();
       const movieBanner = document.getElementById('tog-movie-banner');
       if (movieBanner) movieBanner.remove();
-      endCall(false);
+      sendToBridge({ type: 'end-call', notify: false });
       log('Left room');
       break;
 
@@ -2154,21 +1881,21 @@ chrome.runtime.onMessage.addListener((message) => {
       spawnEmojiFloat(message.emoji);
       break;
 
-    // ── WebRTC signaling ─────────────────────────────────────────────────────
+    // ── WebRTC signaling (forward to bridge) ────────────────────────────────
     case 'offer':
-      handleIncomingOffer(message);
+      sendToBridge(message);
       break;
 
     case 'answer':
-      handleIncomingAnswer(message);
+      sendToBridge(message);
       break;
 
     case 'ice-candidate':
-      handleIncomingIce(message);
+      sendToBridge(message);
       break;
 
     case 'call-ended':
-      endCall(false);
+      sendToBridge({ type: 'call-ended' });
       appendChatMessage('Video call ended by friend.', 'system');
       break;
 
@@ -2187,119 +1914,6 @@ chrome.runtime.onMessage.addListener((message) => {
       break;
   }
 });
-
-// ─── WebRTC signaling handlers ────────────────────────────────────────────────
-
-async function handleIncomingOffer(message) {
-  log('Received incoming call offer');
-
-  // Handle glare collision (both clicked call around the same time)
-  if (pc && pc.signalingState !== 'stable') {
-    if (isHost) {
-      log('Glare detected: Host is impolite peer, ignoring guest offer');
-      return;
-    }
-    log('Glare detected: Guest is polite peer, rolling back local offer to accept host offer');
-    try {
-      await pc.setLocalDescription({ type: 'rollback' });
-    } catch (e) {
-      log('Rollback error:', e);
-    }
-  }
-
-  pendingOffer = message;
-
-  // If local stream is already active (user turned on cam / clicked call), auto-answer immediately
-  if (localStream && localStream.getTracks().some((t) => t.readyState === 'live')) {
-    await answerCall(message);
-  } else {
-    document.getElementById('tog-call-banner')?.classList.remove('hidden');
-    document.getElementById('tog-call-btn')?.classList.add('tog-btn-ringing');
-    appendChatMessage('📞 Friend is calling you... Click "Answer" or the Call button to connect video.', 'system');
-  }
-}
-
-async function answerCall(offerMessage) {
-  pendingOffer = null;
-  document.getElementById('tog-call-banner')?.classList.add('hidden');
-  document.getElementById('tog-call-btn')?.classList.remove('tog-btn-ringing');
-  log('Answering video call...');
-
-  try {
-    localStream = await getLocalMediaStream();
-    showLocalStream(localStream);
-  } catch (err) {
-    log('Could not get local stream on answer call:', err);
-    appendChatMessage('Could not access camera/mic: ' + (err.message || 'Permission denied'), 'system');
-  }
-
-  await setupPeerConnection();
-
-  try {
-    const sdpObj = offerMessage.sdp?.sdp ? offerMessage.sdp : { type: offerMessage.sdp?.type || 'offer', sdp: offerMessage.sdp?.sdp || offerMessage.sdp };
-    await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
-    await flushIceCandidates();
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    sendWS({
-      type: 'answer',
-      sdp: { type: answer.type, sdp: answer.sdp },
-    });
-    log('Answer sent');
-    appendChatMessage('Connected to video call.', 'system');
-    const callBtn = document.getElementById('tog-call-btn');
-    if (callBtn) {
-      callBtn.classList.add('active');
-      callBtn.setAttribute('title', 'End Video Call');
-    }
-  } catch (err) {
-    log('Handle offer failed:', err);
-    appendChatMessage('Failed to answer call.', 'system');
-  }
-}
-
-async function handleIncomingAnswer(message) {
-  if (!pc) return;
-  try {
-    const sdpObj = message.sdp?.sdp ? message.sdp : { type: message.sdp?.type || 'answer', sdp: message.sdp?.sdp || message.sdp };
-    await pc.setRemoteDescription(new RTCSessionDescription(sdpObj));
-    await flushIceCandidates();
-    log('Answer received, remote description set');
-  } catch (err) {
-    log('Handle answer failed:', err);
-  }
-}
-
-async function handleIncomingIce(message) {
-  if (!message.candidate) return;
-  const cand = message.candidate.candidate ? message.candidate : (typeof message.candidate === 'string' ? { candidate: message.candidate } : message.candidate);
-  if (!cand || !cand.candidate) return;
-
-  if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
-    pendingIceCandidates.push(cand);
-    return;
-  }
-  try {
-    await pc.addIceCandidate(new RTCIceCandidate(cand));
-  } catch (e) {
-    log('ICE candidate error:', e);
-  }
-}
-
-async function flushIceCandidates() {
-  if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) return;
-  while (pendingIceCandidates.length > 0) {
-    const candidate = pendingIceCandidates.shift();
-    try {
-      if (candidate) {
-        const cand = candidate.candidate ? candidate : (typeof candidate === 'string' ? { candidate: candidate } : candidate);
-        await pc.addIceCandidate(new RTCIceCandidate(cand));
-      }
-    } catch (e) {
-      log('Flush ICE error:', e);
-    }
-  }
-}
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Together Video Bridge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body {
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+    }
+    body {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .tog-video-tile {
+      position: relative;
+      flex: 1;
+      height: 100%;
+      aspect-ratio: 4/3;
+      border-radius: 10px;
+      overflow: hidden;
+      background: rgba(36, 31, 66, 0.95);
+      border: 1px solid rgba(88, 76, 140, 0.45);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tog-video-tile:hover {
+      border-color: rgba(139, 92, 246, 0.7);
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+    #tog-local-video {
+      transform: scaleX(-1);
+    }
+    .tog-video-label {
+      position: absolute;
+      bottom: 5px;
+      left: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      color: #fff;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .tog-cam-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: linear-gradient(135deg, rgba(36, 31, 66, 0.95) 0%, rgba(24, 20, 48, 0.95) 100%);
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+    .tog-cam-placeholder svg {
+      opacity: 0.55;
+    }
+    body.spotlight-remote #tog-remote-tile { flex: 3.5; }
+    body.spotlight-remote #tog-local-tile { flex: 1; max-width: 110px; }
+    body.spotlight-local #tog-local-tile { flex: 3.5; }
+    body.spotlight-local #tog-remote-tile { flex: 1; max-width: 110px; }
+  </style>
+</head>
+<body>
+  <div class="tog-video-tile" id="tog-local-tile" title="Click to spotlight your camera">
+    <video id="tog-local-video" autoplay muted playsinline></video>
+    <div class="tog-cam-placeholder" id="tog-local-placeholder">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+      <span>You</span>
+    </div>
+    <span class="tog-video-label">You</span>
+  </div>
+
+  <div class="tog-video-tile" id="tog-remote-tile" title="Click to spotlight friend's camera">
+    <video id="tog-remote-video" autoplay playsinline></video>
+    <div class="tog-cam-placeholder" id="tog-remote-placeholder">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>Friend</span>
+    </div>
+    <span class="tog-video-label">Friend</span>
+  </div>
+
+  <audio id="tog-remote-audio" autoplay playsinline></audio>
+  <script src="webrtc_bridge.js"></script>
+</body>
+</html>
