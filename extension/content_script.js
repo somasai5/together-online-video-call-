@@ -372,22 +372,33 @@ function makePipResizable() {
   if (!pip || !resizer) return;
 
   let isResizing = false;
-  let startX = 0;
-  let startWidth = 0;
+  let startX = 0, startY = 0;
+  let startWidth = 0, startHeight = 0;
 
   resizer.addEventListener('mousedown', (e) => {
     e.stopPropagation();
     e.preventDefault();
     isResizing = true;
     startX = e.clientX;
+    startY = e.clientY;
     startWidth = pip.offsetWidth;
+    const webcamSection = document.getElementById('tog-webcam-section');
+    startHeight = webcamSection ? webcamSection.offsetHeight : 135;
     pip.style.transition = 'none';
 
     const onMouseMove = (ev) => {
       if (!isResizing) return;
       const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      // Width driven by horizontal drag
       let newWidth = Math.max(260, Math.min(startWidth + dx, window.innerWidth - 30));
       pip.style.width = `${newWidth}px`;
+      // Video section height driven by vertical drag; fallback to proportional width change
+      const webcamSection = document.getElementById('tog-webcam-section');
+      if (webcamSection) {
+        let newHeight = Math.max(110, Math.min(startHeight + dy, 500));
+        webcamSection.style.height = `${newHeight}px`;
+      }
     };
 
     const onMouseUp = () => {
