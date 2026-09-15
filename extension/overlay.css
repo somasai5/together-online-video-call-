@@ -196,6 +196,30 @@
   color: #fff;
 }
 
+/* ── Top-Center Ad Break Notification Banner ─────────────────────────────── */
+#tog-ad-banner {
+  position: fixed;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: all;
+  background: rgba(30, 20, 50, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--tog-amber);
+  border-radius: var(--tog-radius-pill);
+  padding: 8px 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(245, 158, 11, 0.4);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fef08a;
+  z-index: 2147483646;
+  animation: tog-banner-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 /* ── Top-Right Incoming Call Banner ───────────────────────────────────────── */
 #tog-call-banner {
   position: fixed;

@@ -42,6 +42,7 @@ let videoEl          = null;
 let isSyncing        = false;       // guard against feedback loops
 let syncEnabled      = true;        // enabled by default
 let isInAdBreak      = false;       // don't sync during ads
+let peerInAdBreak    = false;       // true if friend/host is currently in an ad break
 let hostPlaybackRate = 1.0;         // sync movie speed (1x, 1.25x, etc.)
 
 let driftInterval    = null;
@@ -160,6 +161,11 @@ function buildOverlayHTML() {
         <button class="tog-action-btn tog-btn-answer" id="tog-answer-call-btn">Answer</button>
         <button class="tog-action-btn tog-btn-decline" id="tog-decline-call-btn">Decline</button>
       </div>
+    </div>
+
+    <!-- Top-Center Ad Waiting Banner -->
+    <div id="tog-ad-banner" class="hidden">
+      <span>⏳ Friend is watching an ad — movie paused</span>
     </div>
 
     <!-- Autoplay Sync Enable Banner -->
@@ -830,7 +836,16 @@ function attachVideoListeners(v) {
 // ─── Playback sync — host side ────────────────────────────────────────────────
 
 function onVideoPlay() {
-  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  if (!isInRoom || isSyncing || isInAdBreak) return;
+  if (peerInAdBreak) {
+    if (videoEl && !videoEl.paused) {
+      isSyncing = true;
+      videoEl.pause();
+      setTimeout(() => { isSyncing = false; }, 80);
+    }
+    return;
+  }
+  if (!isHost) return;
   sendWS({
     type: 'sync',
     action: 'play',
@@ -843,7 +858,7 @@ function onVideoPlay() {
 }
 
 function onVideoPause() {
-  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  if (!isHost || !isInRoom || isSyncing || isInAdBreak || peerInAdBreak) return;
   sendWS({
     type: 'sync',
     action: 'pause',
@@ -1039,7 +1054,7 @@ function stopDriftHeartbeat() {
 }
 
 function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
-  if (!videoEl || isHost || isInAdBreak || isSyncing) return;
+  if (!videoEl || isHost || isInAdBreak || isSyncing || peerInAdBreak) return;
 
   // Crucial buffering guard: Never disrupt the player while it is loading video chunks!
   if (isVideoBuffering(videoEl)) {
@@ -1224,19 +1239,26 @@ function startAdDetection() {
 
     if (nowInAd !== isInAdBreak) {
       isInAdBreak = nowInAd;
-      log(isInAdBreak ? '🎬 Ad break started — sync paused' : '✅ Ad break ended — sync resumed');
+      log(isInAdBreak ? '🎬 Ad break started — sending ad-start' : '✅ Ad break ended — sending ad-end');
 
-      if (!isInAdBreak) {
+      if (isInAdBreak) {
+        sendWS({ type: 'ad-start' });
+        appendChatMessage('Ad started — pausing playback for your friend.', 'system');
+      } else {
+        sendWS({ type: 'ad-end' });
+        appendChatMessage('Ad ended — resuming movie!', 'system');
+
         if (isHost && videoEl) {
           // Host resumes: broadcast state to guest
           setTimeout(() => {
             sendWS({
               type: 'sync',
-              action: videoEl.paused ? 'pause' : 'play',
+              action: 'play',
               currentTime: videoEl.currentTime,
               sentAt: Date.now(),
             });
-          }, 800);
+            if (videoEl.paused) videoEl.play().catch(() => {});
+          }, 600);
         } else if (!isHost) {
           // Guest finishes ad: request current host state to jump straight to the movie
           setTimeout(() => {
@@ -1753,9 +1775,51 @@ chrome.runtime.onMessage.addListener((message) => {
       }
       break;
 
+    // ── Ad break synchronization (pause movie for peer while in ad) ────────
+    case 'ad-start':
+      peerInAdBreak = true;
+      const whoInAd = isHost ? 'Friend' : 'Host';
+      const adBanner = document.getElementById('tog-ad-banner');
+      if (adBanner) {
+        adBanner.querySelector('span').textContent = `⏳ ${whoInAd} is watching an ad — movie paused`;
+        adBanner.classList.remove('hidden');
+      }
+      appendChatMessage(`⏳ ${whoInAd} entered an ad break — movie automatically paused.`, 'system');
+      if (videoEl && !videoEl.paused) {
+        isSyncing = true;
+        videoEl.pause();
+        setTimeout(() => { isSyncing = false; }, 80);
+      }
+      break;
+
+    case 'ad-end':
+      peerInAdBreak = false;
+      const adBannerEnd = document.getElementById('tog-ad-banner');
+      if (adBannerEnd) {
+        adBannerEnd.classList.add('hidden');
+      }
+      appendChatMessage('Friend’s ad break finished — resuming movie!', 'system');
+      if (isHost && videoEl) {
+        isSyncing = true;
+        videoEl.play().catch(() => {});
+        setTimeout(() => {
+          isSyncing = false;
+          broadcastMovieUrlIfNeeded(true);
+          sendWS({
+            type: 'sync',
+            action: 'play',
+            currentTime: videoEl.currentTime,
+            sentAt: Date.now(),
+          });
+        }, 300);
+      } else if (!isHost) {
+        sendWS({ type: 'state-request' });
+      }
+      break;
+
     // ── Playback sync ───────────────────────────────────────────────────────
     case 'sync':
-      if (isHost) break; // server already validated, but double-guard
+      if (isHost || peerInAdBreak) break; // server already validated, but double-guard
       if (message.url) {
         handleIncomingMovieUrl(message.url, message.title);
       }

@@ -43,6 +43,8 @@ const RELAY_EVENTS = new Set([
   'state-request',
   'state-snapshot',
   'movie-change',
+  'ad-start',
+  'ad-end',
   'clock-ping',
   'clock-pong',
 ]);
