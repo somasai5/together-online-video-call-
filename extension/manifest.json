@@ -56,7 +56,6 @@
     {
       "resources": [
         "overlay.css",
-        "webrtc_bridge.html",
         "icons/*.png"
       ],
       "matches": [
