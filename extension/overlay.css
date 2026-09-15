@@ -199,25 +199,50 @@
 /* ── Top-Center Ad Break Notification Banner ─────────────────────────────── */
 #tog-ad-banner {
   position: fixed;
-  top: 74px;
+  top: 72px;
   left: 50%;
   transform: translateX(-50%);
   pointer-events: all;
-  background: rgba(30, 20, 50, 0.95);
+  background: rgba(26, 18, 44, 0.96);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--tog-amber);
   border-radius: var(--tog-radius-pill);
-  padding: 8px 20px;
+  padding: 7px 14px 7px 18px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(245, 158, 11, 0.4);
+  gap: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.75), 0 0 20px rgba(245, 158, 11, 0.35);
   font-size: 12px;
   font-weight: 600;
   color: #fef08a;
   z-index: 2147483646;
   animation: tog-banner-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#tog-ad-banner-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fef08a;
+  white-space: nowrap;
+}
+
+#tog-ad-action-btn {
+  background: linear-gradient(135deg, var(--tog-amber) 0%, #d97706 100%);
+  color: #1e1b4b;
+  border: none;
+  border-radius: var(--tog-radius-pill);
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.4);
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+}
+
+#tog-ad-action-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.6);
 }
 
 /* ── Top-Right Incoming Call Banner ───────────────────────────────────────── */
@@ -694,6 +719,27 @@
 @keyframes tog-btn-ring-pulse {
   0% { transform: scale(1); box-shadow: 0 0 0 0 var(--tog-green-glow); }
   100% { transform: scale(1.15); box-shadow: 0 0 15px 4px var(--tog-green-glow); }
+}
+
+.tog-ctrl-btn.tog-btn-ad {
+  font-size: 14px;
+}
+
+.tog-ctrl-btn.tog-btn-ad:hover {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: var(--tog-amber);
+}
+
+.tog-ctrl-btn.tog-btn-ad.active {
+  background: rgba(245, 158, 11, 0.35) !important;
+  border-color: var(--tog-amber) !important;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
+  animation: tog-ad-btn-pulse 1.5s infinite alternate ease-in-out;
+}
+
+@keyframes tog-ad-btn-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 6px rgba(245, 158, 11, 0.4); }
+  100% { transform: scale(1.1); box-shadow: 0 0 16px rgba(245, 158, 11, 0.7); }
 }
 
 /* ── Emoji Buttons in PiP Toolbar ────────────────────────────────────────── */

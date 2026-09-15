@@ -165,6 +165,15 @@ function buildOverlayHTML() {
       </div>
     </div>
 
+    <!-- Top-Center Ad Break Notification Banner -->
+    <div id="tog-ad-banner" class="hidden">
+      <span id="tog-ad-banner-text">🍿 Friend is in an ad break</span>
+      <div class="tog-movie-banner-btns">
+        <button class="tog-btn-switch" id="tog-ad-action-btn">⏸️ Pause</button>
+        <button class="tog-btn-dismiss" id="tog-dismiss-ad-btn" title="Dismiss">✕</button>
+      </div>
+    </div>
+
     <!-- Top-Right Incoming Call Banner -->
     <div id="tog-call-banner" class="hidden">
       <span>📞 Friend is calling you...</span>
@@ -263,6 +272,9 @@ function buildOverlayHTML() {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.49 12 19.79 19.79 0 0 1 1.45 3.4 2 2 0 0 1 3.42 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.4a16 16 0 0 0 5.69 5.69l.84-.84a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
             </svg>
+          </button>
+          <button class="tog-ctrl-btn tog-btn-ad" id="tog-ad-btn" title="Notify friend: I am in an ad break">
+            🍿
           </button>
         </div>
         <div class="tog-pip-emoji-row" id="tog-emoji-bar">${emojiButtons}</div>
@@ -650,6 +662,12 @@ function attachOverlayListeners() {
   document.getElementById('tog-call-btn')?.addEventListener('click', handleCallToggle);
   document.getElementById('tog-mute-btn')?.addEventListener('click', handleMuteToggle);
   document.getElementById('tog-cam-btn')?.addEventListener('click', handleCamToggle);
+
+  // Ad Break Alert control
+  document.getElementById('tog-ad-btn')?.addEventListener('click', toggleAdNotification);
+  document.getElementById('tog-dismiss-ad-btn')?.addEventListener('click', () => {
+    document.getElementById('tog-ad-banner')?.classList.add('hidden');
+  });
 
   // Fullscreen change — reparent overlay
   document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -1460,6 +1478,82 @@ function appendChatMessage(text, who, sender) {
   }
 }
 
+// ─── Ad Notification Helpers ──────────────────────────────────────────────────
+
+let myAdInProgress = false;
+let adBannerTimeout = null;
+
+function toggleAdNotification() {
+  myAdInProgress = !myAdInProgress;
+  const btn = document.getElementById('tog-ad-btn');
+  if (btn) {
+    btn.classList.toggle('active', myAdInProgress);
+    btn.setAttribute('title', myAdInProgress ? 'Click when ad ends (notify friend to resume)' : 'Notify friend: I am in an ad break');
+  }
+
+  if (myAdInProgress) {
+    sendWS({
+      type: 'ad-notification',
+      status: 'started',
+      sentAt: Date.now(),
+    });
+    appendChatMessage('🍿 You notified friend that you are in an ad break.', 'mine');
+    showChatToast('🍿 Sent ad alert to friend');
+  } else {
+    sendWS({
+      type: 'ad-notification',
+      status: 'ended',
+      sentAt: Date.now(),
+    });
+    appendChatMessage('🎉 You notified friend that your ad ended.', 'mine');
+    showChatToast('🎉 Sent ad done alert to friend');
+  }
+}
+
+function handleIncomingAdNotification(message) {
+  const adBanner = document.getElementById('tog-ad-banner');
+  const adText = document.getElementById('tog-ad-banner-text');
+  const adActionBtn = document.getElementById('tog-ad-action-btn');
+
+  if (adBannerTimeout) {
+    clearTimeout(adBannerTimeout);
+    adBannerTimeout = null;
+  }
+
+  if (message.status === 'started') {
+    appendChatMessage('🍿 Friend is in an ad break. You can pause while waiting!', 'theirs');
+    showChatToast('🍿 Friend is in an ad break');
+    if (adBanner && adText && adActionBtn) {
+      adText.textContent = '🍿 Friend is in an ad break';
+      adActionBtn.textContent = '⏸️ Pause';
+      adActionBtn.onclick = () => {
+        forcePauseVideo();
+        onVideoPause();
+        adBanner.classList.add('hidden');
+        showChatToast('⏸️ Paused for friend');
+      };
+      adBanner.classList.remove('hidden');
+    }
+  } else if (message.status === 'ended') {
+    appendChatMessage('🎉 Friend\'s ad ended! Ready to play.', 'theirs');
+    showChatToast('🎉 Friend\'s ad ended');
+    if (adBanner && adText && adActionBtn) {
+      adText.textContent = '🎉 Friend\'s ad is done!';
+      adActionBtn.textContent = '▶️ Resume';
+      adActionBtn.onclick = () => {
+        forcePlayVideo();
+        onVideoPlay();
+        adBanner.classList.add('hidden');
+        showChatToast('▶️ Resumed movie');
+      };
+      adBanner.classList.remove('hidden');
+      adBannerTimeout = setTimeout(() => {
+        adBanner?.classList.add('hidden');
+      }, 8000);
+    }
+  }
+}
+
 // ─── Emoji reactions ──────────────────────────────────────────────────────────
 
 function spawnEmojiFloat(emoji) {
@@ -1930,6 +2024,11 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'call-ended':
       endCall(false);
       appendChatMessage('Video call ended by friend.', 'system');
+      break;
+
+    // ── Ad Notification ──────────────────────────────────────────────────────
+    case 'ad-notification':
+      handleIncomingAdNotification(message);
       break;
 
     // ── Clock Synchronization ────────────────────────────────────────────────
