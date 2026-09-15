@@ -366,10 +366,62 @@ function attachOverlayListeners() {
   });
 
   // Movie switch banner & drawer buttons
+  function fastNavigate(targetUrl) {
+    if (!targetUrl) return;
+
+    // Direct player URL optimization: if movie/show URL, route directly to /watch to skip the overview screen
+    let urlToLoad = targetUrl;
+    try {
+      const u = new URL(targetUrl, window.location.origin);
+      if ((u.pathname.includes('/movies/') || u.pathname.includes('/shows/')) && !u.pathname.endsWith('/watch') && !u.pathname.includes('/watch/')) {
+        u.pathname = u.pathname.replace(/\/+$/, '') + '/watch';
+        urlToLoad = u.toString();
+      }
+    } catch {}
+
+    // Instant UI feedback
+    const drawerSwitchBtn = document.getElementById('tog-drawer-switch-btn');
+    const bannerSwitchBtn = document.getElementById('tog-switch-movie-btn');
+    if (drawerSwitchBtn) {
+      drawerSwitchBtn.innerHTML = '⏳ Loading Movie…';
+      drawerSwitchBtn.disabled = true;
+    }
+    if (bannerSwitchBtn) {
+      bannerSwitchBtn.innerHTML = '⏳ Loading…';
+      bannerSwitchBtn.disabled = true;
+    }
+
+    log('Fast navigating to movie:', urlToLoad);
+
+    // 1. Try instant SPA client-side click if matching link exists on page
+    const cleanPath = new URL(urlToLoad, window.location.origin).pathname;
+    const existingLink = Array.from(document.querySelectorAll('a')).find((a) => {
+      try {
+        const href = a.getAttribute('href');
+        return href && (href.includes(cleanPath) || cleanPath.includes(href));
+      } catch {
+        return false;
+      }
+    });
+
+    if (existingLink) {
+      existingLink.click();
+      setTimeout(() => {
+        // Fallback if SPA click didn't navigate within 120ms
+        if (window.location.href !== urlToLoad) {
+          window.location.assign(urlToLoad);
+        }
+      }, 120);
+      return;
+    }
+
+    // 2. Direct fast assign
+    window.location.assign(urlToLoad);
+  }
+
   const onSwitchMovie = () => {
     if (pendingMovieUrl) {
-      log('Switching to host movie:', pendingMovieUrl);
-      window.location.href = pendingMovieUrl;
+      fastNavigate(pendingMovieUrl);
     }
   };
   document.getElementById('tog-switch-movie-btn')?.addEventListener('click', onSwitchMovie);
@@ -702,6 +754,40 @@ function findMainVideo() {
   return best;
 }
 
+function autoStartWatchIfAvailable() {
+  if (isHost || !isInRoom) return false;
+  // If user is on a movie/show overview page with a "Watch Now" or "Resume" button, auto-click it
+  const watchSelectors = [
+    '[data-testid*="watch-now"]',
+    '[data-testid*="play"]',
+    '[aria-label*="Watch Now"]',
+    '[aria-label*="Watch movie"]',
+    '[aria-label*="Resume"]',
+    'button[data-testid*="cta"]',
+    '.watch-btn',
+    '.play-btn',
+  ];
+  for (const sel of watchSelectors) {
+    const btn = document.querySelector(sel);
+    if (btn && btn.offsetParent !== null) {
+      log('Auto-launching player via CTA button:', btn);
+      btn.click();
+      return true;
+    }
+  }
+
+  const allBtns = Array.from(document.querySelectorAll('button, a'));
+  for (const b of allBtns) {
+    const txt = b.textContent.trim().toLowerCase();
+    if ((txt === 'watch now' || txt === 'resume' || txt === 'watch movie' || txt.includes('watch now')) && b.offsetParent !== null && !b.closest('#together-overlay-root')) {
+      log('Auto-launching player via text CTA:', b);
+      b.click();
+      return true;
+    }
+  }
+  return false;
+}
+
 function startVideoObserver() {
   if (videoObserver) videoObserver.disconnect();
   hookSpaNavigation();
@@ -722,6 +808,11 @@ function startVideoObserver() {
       videoEl = v;
       attachVideoListeners(v);
       log('Main Hotstar video element attached:', v);
+      if (!isHost) {
+        sendWS({ type: 'state-request' });
+      }
+    } else if (!v) {
+      autoStartWatchIfAvailable();
     }
   }
 
@@ -730,9 +821,11 @@ function startVideoObserver() {
   videoObserver = new MutationObserver(() => tryAttach());
   videoObserver.observe(document.body, { childList: true, subtree: true });
 
-  if (!window._togVideoCheckInterval) {
-    window._togVideoCheckInterval = setInterval(tryAttach, 1000);
+  if (window._togVideoCheckInterval) {
+    clearInterval(window._togVideoCheckInterval);
   }
+  // High-frequency 150ms check for instantaneous video detection
+  window._togVideoCheckInterval = setInterval(tryAttach, 150);
 }
 
 function attachVideoListeners(v) {
