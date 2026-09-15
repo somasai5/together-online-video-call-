@@ -190,15 +190,11 @@ function handleMessage(ws, rawData, participantId) {
     return;
   }
 
-  // ── sync: server-side host validation ────────────────────────────────────
+  // ── sync: bi-directional playback sync (play, pause, seek, ratechange) ─────
   if (type === 'sync') {
-    if (room.hostId !== participantId) {
-      log('warn', `[SYNC] Dropping sync from non-host ${participantId} in room ${room.code}`);
-      return;
-    }
     const peer = getPeer(room, participantId);
     if (peer && peer.ws) {
-      send(peer.ws, { type: 'sync', ...msg });
+      send(peer.ws, { type: 'sync', ...msg, from: participantId });
     }
     return;
   }

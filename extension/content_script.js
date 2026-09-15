@@ -41,8 +41,6 @@ let isInRoom         = false;
 let videoEl          = null;
 let isSyncing        = false;       // guard against feedback loops
 let syncEnabled      = true;        // enabled by default
-let isInAdBreak      = false;       // don't sync during ads
-let peerInAdBreak    = false;       // true if friend/host is currently in an ad break
 let hostPlaybackRate = 1.0;         // sync movie speed (1x, 1.25x, etc.)
 
 let driftInterval    = null;
@@ -61,9 +59,7 @@ let pendingOffer     = null;        // offer waiting for user interaction/answer
 let overlayRoot      = null;        // #together-overlay-root
 let panelVisible     = true;
 
-// Video and ad observers
 let videoObserver    = null;
-let adObserver       = null;
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
@@ -176,11 +172,6 @@ function buildOverlayHTML() {
         <button class="tog-action-btn tog-btn-answer" id="tog-answer-call-btn">Answer</button>
         <button class="tog-action-btn tog-btn-decline" id="tog-decline-call-btn">Decline</button>
       </div>
-    </div>
-
-    <!-- Top-Center Ad Waiting Banner -->
-    <div id="tog-ad-banner" class="hidden">
-      <span>⏳ Friend is watching an ad — movie paused</span>
     </div>
 
     <!-- Autoplay Sync Enable Banner -->
@@ -893,22 +884,52 @@ function onUrlOrNavChange() {
   }
 }
 
+function getAllVideosInTree(node = document) {
+  const list = [];
+  try {
+    if (node.querySelectorAll) {
+      const vids = Array.from(node.querySelectorAll('video'));
+      list.push(...vids);
+    }
+    const allEls = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];
+    for (const el of allEls) {
+      if (el.shadowRoot) {
+        list.push(...getAllVideosInTree(el.shadowRoot));
+      }
+    }
+    const iframes = node.querySelectorAll ? Array.from(node.querySelectorAll('iframe')) : [];
+    for (const ifr of iframes) {
+      try {
+        if (ifr.contentDocument) {
+          list.push(...getAllVideosInTree(ifr.contentDocument));
+        }
+      } catch {}
+    }
+  } catch {}
+  return list;
+}
+
 function findMainVideo() {
-  const videos = Array.from(document.querySelectorAll('video')).filter((v) => {
-    return v.id !== 'tog-local-video' && v.id !== 'tog-remote-video' && !v.closest('#together-overlay-root');
+  const allVideos = getAllVideosInTree(document);
+  const videos = allVideos.filter((v) => {
+    return (
+      v.id !== 'tog-local-video' &&
+      v.id !== 'tog-remote-video' &&
+      !v.closest('#together-overlay-root')
+    );
   });
 
   if (videos.length === 0) return null;
   if (videos.length === 1) return videos[0];
 
-  // Pick the largest visible video on the page
   let best = videos[0];
   let maxArea = -1;
   for (const v of videos) {
     const rect = v.getBoundingClientRect();
     const area = rect.width * rect.height;
-    if (area > maxArea) {
-      maxArea = area;
+    const score = area + (!v.paused && v.currentTime > 0 ? 1000000 : 0);
+    if (score > maxArea) {
+      maxArea = score;
       best = v;
     }
   }
@@ -926,6 +947,9 @@ function startVideoObserver() {
 
   function tryAttach() {
     if (isAttachingVideo || !chrome.runtime?.id) return;
+    if (videoEl && !videoEl.isConnected) {
+      videoEl = null;
+    }
     isAttachingVideo = true;
 
     try {
@@ -933,7 +957,7 @@ function startVideoObserver() {
       if (v && v !== videoEl) {
         videoEl = v;
         attachVideoListeners(v);
-        log('Main Hotstar video element attached:', v);
+        log('Main video element attached:', v);
         if (!isHost) {
           sendWS({ type: 'state-request' });
         }
@@ -963,7 +987,7 @@ function startVideoObserver() {
   if (window._togVideoCheckInterval) {
     clearInterval(window._togVideoCheckInterval);
   }
-  window._togVideoCheckInterval = setInterval(tryAttach, 1000);
+  window._togVideoCheckInterval = setInterval(tryAttach, 800);
 }
 
 function attachVideoListeners(v) {
@@ -978,24 +1002,26 @@ function attachVideoListeners(v) {
   log('Hooked play/pause/seeking/seeked/ratechange listeners to main video');
 }
 
-// ─── Playback sync — host side ────────────────────────────────────────────────
+// ─── Playback sync — bi-directional (Host & Guest) ───────────────────────────
+
+let ignoreLocalEventsUntil = 0;
+let lastSentAction = null;
+let lastSentActionTime = 0;
 
 function onVideoPlay() {
-  if (!isInRoom || isSyncing || isInAdBreak) return;
-  if (peerInAdBreak) {
-    if (videoEl && !videoEl.paused) {
-      isSyncing = true;
-      videoEl.pause();
-      setTimeout(() => { isSyncing = false; }, 80);
-    }
-    return;
-  }
-  if (!isHost) return;
+  if (!isInRoom || isSyncing || Date.now() < ignoreLocalEventsUntil) return;
+
+  const now = Date.now();
+  if (lastSentAction === 'play' && now - lastSentActionTime < 250) return;
+  lastSentAction = 'play';
+  lastSentActionTime = now;
+
+  log('Broadcasting PLAY event...');
   sendWS({
     type: 'sync',
     action: 'play',
-    currentTime: videoEl.currentTime,
-    rate: videoEl.playbackRate,
+    currentTime: videoEl ? videoEl.currentTime : 0,
+    rate: videoEl ? videoEl.playbackRate : 1.0,
     url: window.location.href,
     title: getMovieTitle(),
     sentAt: Date.now(),
@@ -1003,12 +1029,19 @@ function onVideoPlay() {
 }
 
 function onVideoPause() {
-  if (!isHost || !isInRoom || isSyncing || isInAdBreak || peerInAdBreak) return;
+  if (!isInRoom || isSyncing || Date.now() < ignoreLocalEventsUntil) return;
+
+  const now = Date.now();
+  if (lastSentAction === 'pause' && now - lastSentActionTime < 250) return;
+  lastSentAction = 'pause';
+  lastSentActionTime = now;
+
+  log('Broadcasting PAUSE event...');
   sendWS({
     type: 'sync',
     action: 'pause',
-    currentTime: videoEl.currentTime,
-    rate: videoEl.playbackRate,
+    currentTime: videoEl ? videoEl.currentTime : 0,
+    rate: videoEl ? videoEl.playbackRate : 1.0,
     url: window.location.href,
     title: getMovieTitle(),
     sentAt: Date.now(),
@@ -1016,12 +1049,19 @@ function onVideoPause() {
 }
 
 function onVideoSeeking() {
-  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  if (!isInRoom || isSyncing || Date.now() < ignoreLocalEventsUntil) return;
+  if (videoEl && videoEl.currentTime < 0.5 && videoEl.readyState < 2) return;
+
+  const now = Date.now();
+  if (lastSentAction === 'seek' && now - lastSentActionTime < 150) return;
+  lastSentAction = 'seek';
+  lastSentActionTime = now;
+
   sendWS({
     type: 'sync',
     action: 'seek',
-    currentTime: videoEl.currentTime,
-    rate: videoEl.playbackRate,
+    currentTime: videoEl ? videoEl.currentTime : 0,
+    rate: videoEl ? videoEl.playbackRate : 1.0,
     url: window.location.href,
     title: getMovieTitle(),
     sentAt: Date.now(),
@@ -1029,12 +1069,19 @@ function onVideoSeeking() {
 }
 
 function onVideoSeeked() {
-  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  if (!isInRoom || isSyncing || Date.now() < ignoreLocalEventsUntil) return;
+  if (videoEl && videoEl.currentTime < 0.5 && videoEl.readyState < 2) return;
+
+  const now = Date.now();
+  if (lastSentAction === 'seek' && now - lastSentActionTime < 150) return;
+  lastSentAction = 'seek';
+  lastSentActionTime = now;
+
   sendWS({
     type: 'sync',
     action: 'seek',
-    currentTime: videoEl.currentTime,
-    rate: videoEl.playbackRate,
+    currentTime: videoEl ? videoEl.currentTime : 0,
+    rate: videoEl ? videoEl.playbackRate : 1.0,
     url: window.location.href,
     title: getMovieTitle(),
     sentAt: Date.now(),
@@ -1042,12 +1089,13 @@ function onVideoSeeked() {
 }
 
 function onVideoRateChange() {
-  if (!isHost || !isInRoom || isSyncing || isInAdBreak) return;
+  if (!isInRoom || isSyncing || Date.now() < ignoreLocalEventsUntil) return;
+
   sendWS({
     type: 'sync',
     action: 'ratechange',
-    rate: videoEl.playbackRate,
-    currentTime: videoEl.currentTime,
+    rate: videoEl ? videoEl.playbackRate : 1.0,
+    currentTime: videoEl ? videoEl.currentTime : 0,
     url: window.location.href,
     title: getMovieTitle(),
     sentAt: Date.now(),
@@ -1067,7 +1115,6 @@ function startClockSync() {
     });
   }, 2000);
 
-  // Initial immediate burst of 3 pings for instant clock calibration
   sendWS({ type: 'clock-ping', t0: Date.now() });
   setTimeout(() => sendWS({ type: 'clock-ping', t0: Date.now() }), 300);
   setTimeout(() => sendWS({ type: 'clock-ping', t0: Date.now() }), 600);
@@ -1095,7 +1142,6 @@ function handleClockPong(message) {
   clockSyncSamples.push(offset);
   if (clockSyncSamples.length > 7) clockSyncSamples.shift();
 
-  // Median filtering to eliminate random network latency jitter
   const sorted = [...clockSyncSamples].sort((a, b) => a - b);
   clockOffsetMs = sorted[Math.floor(sorted.length / 2)];
 }
@@ -1105,26 +1151,120 @@ function getCorrectedHostTime(hostTime, sentAt, hostPaused, hostRate) {
   if (!sentAt) return hostTime;
 
   const now = Date.now();
-  // Time elapsed in Host's clock domain since host dispatched the event
-  const hostNowEstimate = now + clockOffsetMs;
+  const offset = isHost ? 0 : clockOffsetMs;
+  const hostNowEstimate = now + offset;
   const elapsedSeconds = Math.max((hostNowEstimate - sentAt) / 1000, 0);
 
-  // If paused, host position didn't advance; if playing, advance by exact elapsed seconds * playback speed
   return hostPaused ? hostTime : (hostTime + (elapsedSeconds * baseRate));
 }
 
 let lastHardSeekTime = 0;
 
-function isVideoBuffering(v) {
-  if (!v) return false;
-  // readyState < 3 means HAVE_NOTHING (0), HAVE_METADATA (1), or HAVE_CURRENT_DATA (2) - stalling / downloading
-  return v.seeking || v.readyState < 3 || v.networkState === 2;
+function forcePlayVideo(targetTime = null) {
+  if (!videoEl || !videoEl.isConnected) {
+    const v = findMainVideo();
+    if (v) {
+      videoEl = v;
+      attachVideoListeners(v);
+    }
+  }
+
+  if (!videoEl) return;
+
+  isSyncing = true;
+  ignoreLocalEventsUntil = Date.now() + 400;
+
+  if (typeof targetTime === 'number' && targetTime >= 0 && Math.abs(videoEl.currentTime - targetTime) > 0.35) {
+    try {
+      videoEl.currentTime = targetTime;
+    } catch {}
+  }
+
+  const playPromise = videoEl.play();
+  if (playPromise !== undefined) {
+    playPromise.catch((err) => {
+      log('Direct play prevented, clicking UI play button:', err.message);
+      const playBtnSelectors = [
+        '[data-testid*="play-pause"]',
+        '[data-testid*="play"]',
+        'button[aria-label*="Play" i]',
+        'button[aria-label*="play" i]',
+        '.play-btn',
+        '.player-play-btn',
+        '.play-icon',
+        '.shaka-play-button',
+      ];
+      let clicked = false;
+      for (const sel of playBtnSelectors) {
+        const btn = document.querySelector(sel);
+        if (btn && btn.offsetParent !== null && !btn.closest('#together-overlay-root')) {
+          btn.click();
+          clicked = true;
+          break;
+        }
+      }
+
+      if (!clicked) {
+        document.getElementById('tog-desync-prompt')?.classList.remove('hidden');
+      }
+    });
+  }
+
+  setTimeout(() => { isSyncing = false; }, 200);
 }
 
-// ─── Playback sync — guest side (smooth & buffer-protected) ───────────────────
+function forcePauseVideo() {
+  if (!videoEl || !videoEl.isConnected) {
+    const v = findMainVideo();
+    if (v) {
+      videoEl = v;
+      attachVideoListeners(v);
+    }
+  }
+  if (!videoEl) return;
+
+  isSyncing = true;
+  ignoreLocalEventsUntil = Date.now() + 400;
+
+  try {
+    videoEl.pause();
+    if (!videoEl.paused) {
+      const pauseBtnSelectors = [
+        '[data-testid*="play-pause"]',
+        '[data-testid*="pause"]',
+        'button[aria-label*="Pause" i]',
+        'button[aria-label*="pause" i]',
+        '.pause-btn',
+        '.player-pause-btn',
+        '.pause-icon',
+        '.shaka-pause-button',
+      ];
+      for (const sel of pauseBtnSelectors) {
+        const btn = document.querySelector(sel);
+        if (btn && btn.offsetParent !== null && !btn.closest('#together-overlay-root')) {
+          btn.click();
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    log('forcePauseVideo error:', err);
+  } finally {
+    setTimeout(() => { isSyncing = false; }, 200);
+  }
+}
+
+// ─── Playback sync — applying incoming sync ───────────────────────────────────
 
 function applySync(action, currentTime, sentAt, rate) {
-  if (!videoEl || isInAdBreak) return;
+  if (!videoEl || !videoEl.isConnected) {
+    const v = findMainVideo();
+    if (v) {
+      videoEl = v;
+      attachVideoListeners(v);
+    }
+  }
+  if (!videoEl) return;
 
   if (typeof rate === 'number' && rate > 0) {
     hostPlaybackRate = rate;
@@ -1133,27 +1273,24 @@ function applySync(action, currentTime, sentAt, rate) {
   const targetTime = getCorrectedHostTime(currentTime, sentAt, action === 'pause', baseRate);
 
   isSyncing = true;
+  ignoreLocalEventsUntil = Date.now() + 400;
+
   try {
     if (action === 'play') {
-      // If not already within 0.4s, align time
-      if (Math.abs(videoEl.currentTime - targetTime) > 0.4) {
-        videoEl.currentTime = targetTime;
+      if (Math.abs(videoEl.currentTime - targetTime) > 0.35) {
+        try { videoEl.currentTime = targetTime; } catch {}
       }
       if (videoEl.playbackRate !== baseRate) {
         videoEl.playbackRate = baseRate;
       }
-      const playPromise = videoEl.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          log('Guest autoplay prevented:', err.message);
-          document.getElementById('tog-desync-prompt')?.classList.remove('hidden');
-        });
-      }
+      forcePlayVideo(targetTime);
     } else if (action === 'pause') {
-      if (!videoEl.paused) videoEl.pause();
-      videoEl.currentTime = targetTime;
+      forcePauseVideo();
+      if (Math.abs(videoEl.currentTime - targetTime) > 0.05) {
+        try { videoEl.currentTime = targetTime; } catch {}
+      }
     } else if (action === 'seek') {
-      videoEl.currentTime = targetTime;
+      try { videoEl.currentTime = targetTime; } catch {}
       if (videoEl.playbackRate !== baseRate) {
         videoEl.playbackRate = baseRate;
       }
@@ -1163,11 +1300,11 @@ function applySync(action, currentTime, sentAt, rate) {
       }
     }
   } finally {
-    setTimeout(() => { isSyncing = false; }, 80);
+    setTimeout(() => { isSyncing = false; }, 200);
   }
 }
 
-// ─── Professional PID Drift Correction (buffer-safe) ─────────────────────────
+// ─── Drift Correction ─────────────────────────────────────────────────────────
 
 function startDriftHeartbeat() {
   if (!isHost) return;
@@ -1178,7 +1315,7 @@ function startDriftHeartbeat() {
       return;
     }
     broadcastMovieUrlIfNeeded();
-    if (!videoEl || isInAdBreak) return;
+    if (!videoEl) return;
     sendWS({
       type: 'drift-heartbeat',
       currentTime: videoEl.currentTime,
@@ -1199,12 +1336,16 @@ function stopDriftHeartbeat() {
 }
 
 function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
-  if (!videoEl || isHost || isInAdBreak || isSyncing || peerInAdBreak) return;
+  if (isHost || isSyncing || Date.now() < ignoreLocalEventsUntil) return;
 
-  // Crucial buffering guard: Never disrupt the player while it is loading video chunks!
-  if (isVideoBuffering(videoEl)) {
-    return;
+  if (!videoEl || !videoEl.isConnected) {
+    const v = findMainVideo();
+    if (v) {
+      videoEl = v;
+      attachVideoListeners(v);
+    }
   }
+  if (!videoEl) return;
 
   if (typeof hostRate === 'number' && hostRate > 0) {
     hostPlaybackRate = hostRate;
@@ -1212,60 +1353,50 @@ function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
   const baseRate = hostPlaybackRate || 1.0;
   const correctedHostTime = getCorrectedHostTime(hostTime, sentAt, hostPaused, baseRate);
 
-  // 1. Correct paused/playing state if mismatched
-  if (typeof hostPaused === 'boolean') {
-    if (hostPaused && !videoEl.paused) {
-      isSyncing = true;
-      videoEl.pause();
-      videoEl.currentTime = correctedHostTime;
-      setTimeout(() => { isSyncing = false; }, 80);
-      return;
-    } else if (!hostPaused && videoEl.paused && syncEnabled) {
-      isSyncing = true;
-      videoEl.playbackRate = baseRate;
-      videoEl.currentTime = correctedHostTime;
-      videoEl.play().catch(() => {});
-      setTimeout(() => { isSyncing = false; }, 80);
-      return;
+  // If host is paused, ensure guest is paused and aligned
+  if (hostPaused) {
+    if (!videoEl.paused) {
+      forcePauseVideo();
     }
+    if (Math.abs(videoEl.currentTime - correctedHostTime) > 0.05) {
+      try { videoEl.currentTime = correctedHostTime; } catch {}
+    }
+    return;
   }
 
-  // If host is paused, lock position
-  if (hostPaused && videoEl.paused) {
-    if (Math.abs(videoEl.currentTime - correctedHostTime) > 0.08) {
-      videoEl.currentTime = correctedHostTime;
-    }
+  // If host is playing but guest is paused, let manual play or sync trigger it
+  if (videoEl.paused) {
     return;
   }
 
   const diff = Math.abs(videoEl.currentTime - correctedHostTime);
 
-  // 1. Deadzone (< 350ms): Imperceptible human sync — keep standard playback rate
-  if (diff <= DRIFT_DEADZONE_THRESHOLD) {
+  // 1. Deadzone (< 100ms): In sync
+  if (diff <= 0.10) {
     if (videoEl.playbackRate !== baseRate) {
       videoEl.playbackRate = baseRate;
     }
     return;
   }
 
-  // 2. Large desync (> 1.5s): snap seek with 2s cooldown to prevent buffer churn
-  if (diff > DRIFT_HARD_SEEK_THRESHOLD) {
+  // 2. Large desync (> 1.0s): snap seek
+  if (diff > 1.0) {
     const now = Date.now();
     if (now - lastHardSeekTime > HARD_SEEK_COOLDOWN_MS) {
       lastHardSeekTime = now;
       isSyncing = true;
+      ignoreLocalEventsUntil = Date.now() + 400;
       videoEl.currentTime = correctedHostTime;
       if (videoEl.playbackRate !== baseRate) videoEl.playbackRate = baseRate;
-      setTimeout(() => { isSyncing = false; }, 100);
+      setTimeout(() => { isSyncing = false; }, 200);
       log(`Drift snap seek: Δ${diff.toFixed(2)}s -> ${correctedHostTime.toFixed(2)}s`);
     }
     return;
   }
 
-  // 3. Smooth PID Micro-Adjustment (350ms - 1.5s):
-  // Adjust playback rate by ±2% to ±4% to seamlessly pull the guest into lockstep without buffering
+  // 3. Smooth PID Micro-Adjustment (100ms - 1.0s):
   const isLagging = correctedHostTime > videoEl.currentTime;
-  const speedDelta = Math.min(diff * 0.035, 0.05); // max 5% adjustment (completely inaudible & smooth)
+  const speedDelta = Math.min(diff * 0.04, 0.05);
   const targetRate = isLagging ? (baseRate + speedDelta) : Math.max(baseRate - speedDelta, 0.95);
 
   videoEl.playbackRate = targetRate;
@@ -1274,185 +1405,6 @@ function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
   videoEl._togNudgeTimeout = setTimeout(() => {
     if (videoEl && !isSyncing) videoEl.playbackRate = baseRate;
   }, 400);
-}
-
-// ─── Ad break detection & auto-skip ──────────────────────────────────────────
-
-let adCheckInterval = null;
-
-function isAdOverlayPresent() {
-  const adSelectors = [
-    '[data-testid*="ad-container"]',
-    '[data-testid*="adContainer"]',
-    '[data-testid*="advertisement"]',
-    '[data-testid*="ad_"]',
-    '.ad-container',
-    '.ad-badge',
-    '.ad-timer',
-    '.ad-countdown',
-    '[class*="adContainer"]',
-    '[class*="ad-container"]',
-    '[class*="adOverlay"]',
-    '[class*="AdOverlay"]',
-    '[class*="ad-overlay"]',
-    '[class*="adBadge"]',
-    '[class*="ad-badge"]',
-    '[class*="adTimer"]',
-    '[class*="ad-timer"]',
-    '[class*="adCountdown"]',
-    '[class*="video-ad"]',
-    '[class*="shaka-ad"]',
-    '[aria-label*="Advertisement"]',
-  ];
-
-  for (const sel of adSelectors) {
-    const el = document.querySelector(sel);
-    if (el && el.offsetParent !== null && !el.closest('#together-overlay-root')) {
-      return true;
-    }
-  }
-
-  // Also check if player has text indicating an ad
-  const adTextTags = document.querySelectorAll('span, p, div');
-  for (const t of adTextTags) {
-    if (t.closest('#together-overlay-root') || t.offsetParent === null) continue;
-    const txt = t.textContent.trim();
-    if (/^Ad\s*[:•·]\s*\d+/i.test(txt) || /^Ad\s+\d+\s+of\s+\d+/i.test(txt) || /^Advertisement/i.test(txt)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function trySkipOrDismissAd() {
-  const skipSelectors = [
-    '[data-testid*="skip-ad"]',
-    '[data-testid*="skip"]',
-    '[data-testid*="ad-skip"]',
-    '[class*="skip-ad"]',
-    '[class*="skipAd"]',
-    '[class*="skip_ad"]',
-    '[class*="ad-skip"]',
-    '[class*="adSkip"]',
-    '[class*="skip-button"]',
-    '[class*="skipButton"]',
-    '[class*="skipBtn"]',
-    '[class*="video-ad-skip"]',
-    '[aria-label*="Skip Ad"]',
-    '[aria-label*="Skip ad"]',
-    '[aria-label*="Skip"]',
-    'button.skip',
-    '.skip-btn',
-    '.ad-skip-btn',
-  ];
-
-  for (const sel of skipSelectors) {
-    const btn = document.querySelector(sel);
-    if (btn && btn.offsetParent !== null && !btn.closest('#together-overlay-root')) {
-      log('Auto-clicking Ad Skip button:', btn);
-      btn.click();
-      return true;
-    }
-  }
-
-  // Check buttons/clickable elements with "Skip" text
-  const allClickables = Array.from(document.querySelectorAll('button, div[role="button"], a, span[role="button"]'));
-  for (const el of allClickables) {
-    if (el.closest('#together-overlay-root') || el.offsetParent === null) continue;
-    const txt = el.textContent.trim().toLowerCase();
-    if (txt === 'skip ad' || txt === 'skip' || txt === 'skip advertisement' || txt.startsWith('skip ad') || txt === 'close ad') {
-      log('Auto-clicking Ad text button:', el);
-      el.click();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function startAdDetection() {
-  function checkAdState() {
-    if (!isInRoom || !chrome.runtime?.id) return;
-
-    const nowInAd = isAdOverlayPresent();
-
-    if (nowInAd) {
-      // While in ad, attempt to skip / close the ad as soon as time runs out
-      trySkipOrDismissAd();
-    }
-
-    if (nowInAd !== isInAdBreak) {
-      isInAdBreak = nowInAd;
-      log(isInAdBreak ? '🎬 Ad break started — sending ad-start' : '✅ Ad break ended — sending ad-end');
-
-      if (isInAdBreak) {
-        sendWS({ type: 'ad-start' });
-        appendChatMessage('Ad started — pausing playback for your friend.', 'system');
-      } else {
-        sendWS({ type: 'ad-end' });
-        appendChatMessage('Ad ended — resuming movie!', 'system');
-
-        if (isHost && videoEl) {
-          // Host resumes: broadcast state to guest
-          setTimeout(() => {
-            sendWS({
-              type: 'sync',
-              action: 'play',
-              currentTime: videoEl.currentTime,
-              sentAt: Date.now(),
-            });
-            if (videoEl.paused) videoEl.play().catch(() => {});
-          }, 600);
-        } else if (!isHost) {
-          // Guest finishes ad: request current host state to jump straight to the movie
-          setTimeout(() => {
-            sendWS({ type: 'state-request' });
-            if (videoEl && videoEl.paused && syncEnabled) {
-              videoEl.play().catch(() => {});
-            }
-          }, 300);
-        }
-      }
-    }
-  }
-
-  if (adObserver) {
-    adObserver.disconnect();
-    adObserver = null;
-  }
-
-  let checkScheduled = false;
-  adObserver = new MutationObserver(() => {
-    if (!checkScheduled) {
-      checkScheduled = true;
-      requestAnimationFrame(() => {
-        checkScheduled = false;
-        checkAdState();
-      });
-    }
-  });
-
-  if (document.body) {
-    adObserver.observe(document.body, { childList: true, subtree: true });
-  }
-
-  if (adCheckInterval) clearInterval(adCheckInterval);
-  adCheckInterval = setInterval(checkAdState, 350);
-
-  checkAdState();
-}
-
-function stopAdDetection() {
-  if (adObserver) {
-    adObserver.disconnect();
-    adObserver = null;
-  }
-  if (adCheckInterval) {
-    clearInterval(adCheckInterval);
-    adCheckInterval = null;
-  }
-  isInAdBreak = false;
 }
 
 // ─── Text chat ────────────────────────────────────────────────────────────────
@@ -1811,7 +1763,6 @@ chrome.runtime.onMessage.addListener((message) => {
       if (drawerRoomEl) drawerRoomEl.textContent = roomCode || '———';
 
       startVideoObserver();
-      startAdDetection();
       startMovieSyncMonitor();
 
       if (isHost) {
@@ -1867,7 +1818,6 @@ chrome.runtime.onMessage.addListener((message) => {
       participantId = null;
       isHost = false;
       stopDriftHeartbeat();
-      stopAdDetection();
       if (movieSyncInterval) {
         clearInterval(movieSyncInterval);
         movieSyncInterval = null;
@@ -1926,52 +1876,16 @@ chrome.runtime.onMessage.addListener((message) => {
       }
       break;
 
-    // ── Ad break synchronization (pause movie for peer while in ad) ────────
-    case 'ad-start':
-      peerInAdBreak = true;
-      const whoInAd = isHost ? 'Friend' : 'Host';
-      const adBanner = document.getElementById('tog-ad-banner');
-      if (adBanner) {
-        adBanner.querySelector('span').textContent = `⏳ ${whoInAd} is watching an ad — movie paused`;
-        adBanner.classList.remove('hidden');
-      }
-      appendChatMessage(`⏳ ${whoInAd} entered an ad break — movie automatically paused.`, 'system');
-      if (videoEl && !videoEl.paused) {
-        isSyncing = true;
-        videoEl.pause();
-        setTimeout(() => { isSyncing = false; }, 80);
-      }
-      break;
-
-    case 'ad-end':
-      peerInAdBreak = false;
-      const adBannerEnd = document.getElementById('tog-ad-banner');
-      if (adBannerEnd) {
-        adBannerEnd.classList.add('hidden');
-      }
-      appendChatMessage('Friend’s ad break finished — resuming movie!', 'system');
-      if (isHost && videoEl) {
-        isSyncing = true;
-        videoEl.play().catch(() => {});
-        setTimeout(() => {
-          isSyncing = false;
-          broadcastMovieUrlIfNeeded(true);
-          sendWS({
-            type: 'sync',
-            action: 'play',
-            currentTime: videoEl.currentTime,
-            sentAt: Date.now(),
-          });
-        }, 300);
-      } else if (!isHost) {
-        sendWS({ type: 'state-request' });
-      }
-      break;
-
     // ── Playback sync ───────────────────────────────────────────────────────
     case 'sync':
-      if (isHost || peerInAdBreak) break; // server already validated, but double-guard
-      if (message.url) {
+      if (!videoEl || !videoEl.isConnected) {
+        const vSync = findMainVideo();
+        if (vSync) {
+          videoEl = vSync;
+          attachVideoListeners(vSync);
+        }
+      }
+      if (!isHost && message.url) {
         handleIncomingMovieUrl(message.url, message.title);
       }
       if (!syncEnabled) break;
@@ -2150,7 +2064,6 @@ function initRoom(data) {
   if (pipRoomEl) pipRoomEl.textContent = roomCode || '———';
 
   startVideoObserver();
-  startAdDetection();
   startMovieSyncMonitor();
 
   if (isHost) {

@@ -125,9 +125,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!tabs) return;
       for (const tab of tabs) {
         if (tab.id === undefined || tab.id < 0) continue;
-        if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) continue;
+        if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:') || tab.url.startsWith('chrome-extension://'))) continue;
 
-        const isHotstar = tab.url && (tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com'));
+        const isHotstar = !tab.url || tab.url.includes('hotstar.com') || tab.url.includes('jiohotstar.com') || tab.url.includes('disneyplus');
         if (!isHotstar) continue;
 
         try {
