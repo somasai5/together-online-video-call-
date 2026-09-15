@@ -605,6 +605,8 @@ function escapeHTML(str) {
   }[tag] || tag));
 }
 
+let lastRenderedMovieStateKey = '';
+
 function updateDrawerMovieCard(url, title, isHostRole) {
   const titleEl = document.getElementById('tog-drawer-movie-title');
   const switchBtn = document.getElementById('tog-drawer-switch-btn');
@@ -612,6 +614,14 @@ function updateDrawerMovieCard(url, title, isHostRole) {
   const bannerText = document.getElementById('tog-movie-text');
 
   if (!titleEl) return;
+
+  const currentNorm = normalizeUrl(window.location.href);
+  const targetNorm  = lastKnownHostUrl ? normalizeUrl(lastKnownHostUrl) : '';
+  const hostTitle   = lastKnownHostTitle || (lastKnownHostUrl ? getMovieTitle(lastKnownHostUrl) : "Host's Movie");
+
+  const stateKey = `${isHostRole}|${url}|${title}|${lastKnownHostUrl}|${currentNorm}|${targetNorm}|${hostTitle}`;
+  if (stateKey === lastRenderedMovieStateKey) return;
+  lastRenderedMovieStateKey = stateKey;
 
   if (isHostRole) {
     titleEl.innerHTML = `<strong>Watching:</strong> ${escapeHTML(title || 'Hotstar')}`;
@@ -628,21 +638,20 @@ function updateDrawerMovieCard(url, title, isHostRole) {
     return;
   }
 
-  const currentNorm = normalizeUrl(window.location.href);
-  const targetNorm  = normalizeUrl(lastKnownHostUrl);
-  const hostTitle   = lastKnownHostTitle || getMovieTitle(lastKnownHostUrl) || "Host's Movie";
-
   if (currentNorm !== targetNorm) {
     pendingMovieUrl = lastKnownHostUrl;
     titleEl.innerHTML = `<span style="color:#f59e0b">Host is on:</span> <strong>${escapeHTML(hostTitle)}</strong>`;
     if (switchBtn) {
       switchBtn.textContent = `🎬 Switch to ${hostTitle}`;
+      switchBtn.disabled = false;
       switchBtn.classList.remove('hidden');
     }
     if (bannerText) {
       bannerText.innerHTML = `🎬 Host is watching: <strong>${escapeHTML(hostTitle)}</strong>`;
     }
     if (banner) {
+      const bBtn = document.getElementById('tog-switch-movie-btn');
+      if (bBtn) bBtn.disabled = false;
       banner.classList.remove('hidden');
     }
   } else {
@@ -712,7 +721,7 @@ function startMovieSyncMonitor() {
     } else {
       checkMovieUrlMatch();
     }
-  }, 400);
+  }, 500);
 }
 
 function hookSpaNavigation() {
@@ -754,78 +763,55 @@ function findMainVideo() {
   return best;
 }
 
-function autoStartWatchIfAvailable() {
-  if (isHost || !isInRoom) return false;
-  // If user is on a movie/show overview page with a "Watch Now" or "Resume" button, auto-click it
-  const watchSelectors = [
-    '[data-testid*="watch-now"]',
-    '[data-testid*="play"]',
-    '[aria-label*="Watch Now"]',
-    '[aria-label*="Watch movie"]',
-    '[aria-label*="Resume"]',
-    'button[data-testid*="cta"]',
-    '.watch-btn',
-    '.play-btn',
-  ];
-  for (const sel of watchSelectors) {
-    const btn = document.querySelector(sel);
-    if (btn && btn.offsetParent !== null) {
-      log('Auto-launching player via CTA button:', btn);
-      btn.click();
-      return true;
-    }
-  }
-
-  const allBtns = Array.from(document.querySelectorAll('button, a'));
-  for (const b of allBtns) {
-    const txt = b.textContent.trim().toLowerCase();
-    if ((txt === 'watch now' || txt === 'resume' || txt === 'watch movie' || txt.includes('watch now')) && b.offsetParent !== null && !b.closest('#together-overlay-root')) {
-      log('Auto-launching player via text CTA:', b);
-      b.click();
-      return true;
-    }
-  }
-  return false;
-}
+let isAttachingVideo = false;
 
 function startVideoObserver() {
-  if (videoObserver) videoObserver.disconnect();
+  if (videoObserver) {
+    videoObserver.disconnect();
+    videoObserver = null;
+  }
   hookSpaNavigation();
 
   function tryAttach() {
-    if (!chrome.runtime?.id) {
-      cleanupOrphanedScript();
-      return;
-    }
-    if (isHost) {
-      broadcastMovieUrlIfNeeded();
-    } else {
-      checkMovieUrlMatch();
-    }
+    if (isAttachingVideo || !chrome.runtime?.id) return;
+    isAttachingVideo = true;
 
-    const v = findMainVideo();
-    if (v && v !== videoEl) {
-      videoEl = v;
-      attachVideoListeners(v);
-      log('Main Hotstar video element attached:', v);
-      if (!isHost) {
-        sendWS({ type: 'state-request' });
+    try {
+      const v = findMainVideo();
+      if (v && v !== videoEl) {
+        videoEl = v;
+        attachVideoListeners(v);
+        log('Main Hotstar video element attached:', v);
+        if (!isHost) {
+          sendWS({ type: 'state-request' });
+        }
       }
-    } else if (!v) {
-      autoStartWatchIfAvailable();
+    } finally {
+      isAttachingVideo = false;
     }
   }
 
-  tryAttach(); // immediate attempt
+  tryAttach();
 
-  videoObserver = new MutationObserver(() => tryAttach());
-  videoObserver.observe(document.body, { childList: true, subtree: true });
+  let attachScheduled = false;
+  videoObserver = new MutationObserver(() => {
+    if (!attachScheduled) {
+      attachScheduled = true;
+      requestAnimationFrame(() => {
+        attachScheduled = false;
+        tryAttach();
+      });
+    }
+  });
+
+  if (document.body) {
+    videoObserver.observe(document.body, { childList: true, subtree: true });
+  }
 
   if (window._togVideoCheckInterval) {
     clearInterval(window._togVideoCheckInterval);
   }
-  // High-frequency 150ms check for instantaneous video detection
-  window._togVideoCheckInterval = setInterval(tryAttach, 150);
+  window._togVideoCheckInterval = setInterval(tryAttach, 1000);
 }
 
 function attachVideoListeners(v) {
