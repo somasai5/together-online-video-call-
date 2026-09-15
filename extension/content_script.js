@@ -1092,41 +1092,163 @@ function applyDriftCorrection(hostTime, sentAt, hostPaused, hostRate) {
   }
 }
 
-// ─── Ad break detection ───────────────────────────────────────────────────────
+// ─── Ad break detection & auto-skip ──────────────────────────────────────────
 
-/**
- * Hotstar marks ad playback with a specific class on the player container.
- * We observe both DOM class mutations and video `src` changes.
- * Adjust the selectors here based on real DOM inspection.
- */
+let adCheckInterval = null;
+
+function isAdOverlayPresent() {
+  const adSelectors = [
+    '[data-testid*="ad-container"]',
+    '[data-testid*="adContainer"]',
+    '[data-testid*="advertisement"]',
+    '[data-testid*="ad_"]',
+    '.ad-container',
+    '.ad-badge',
+    '.ad-timer',
+    '.ad-countdown',
+    '[class*="adContainer"]',
+    '[class*="ad-container"]',
+    '[class*="adOverlay"]',
+    '[class*="AdOverlay"]',
+    '[class*="ad-overlay"]',
+    '[class*="adBadge"]',
+    '[class*="ad-badge"]',
+    '[class*="adTimer"]',
+    '[class*="ad-timer"]',
+    '[class*="adCountdown"]',
+    '[class*="video-ad"]',
+    '[class*="shaka-ad"]',
+    '[aria-label*="Advertisement"]',
+  ];
+
+  for (const sel of adSelectors) {
+    const el = document.querySelector(sel);
+    if (el && el.offsetParent !== null && !el.closest('#together-overlay-root')) {
+      return true;
+    }
+  }
+
+  // Also check if player has text indicating an ad
+  const adTextTags = document.querySelectorAll('span, p, div');
+  for (const t of adTextTags) {
+    if (t.closest('#together-overlay-root') || t.offsetParent === null) continue;
+    const txt = t.textContent.trim();
+    if (/^Ad\s*[:•·]\s*\d+/i.test(txt) || /^Ad\s+\d+\s+of\s+\d+/i.test(txt) || /^Advertisement/i.test(txt)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function trySkipOrDismissAd() {
+  const skipSelectors = [
+    '[data-testid*="skip-ad"]',
+    '[data-testid*="skip"]',
+    '[data-testid*="ad-skip"]',
+    '[class*="skip-ad"]',
+    '[class*="skipAd"]',
+    '[class*="skip_ad"]',
+    '[class*="ad-skip"]',
+    '[class*="adSkip"]',
+    '[class*="skip-button"]',
+    '[class*="skipButton"]',
+    '[class*="skipBtn"]',
+    '[class*="video-ad-skip"]',
+    '[aria-label*="Skip Ad"]',
+    '[aria-label*="Skip ad"]',
+    '[aria-label*="Skip"]',
+    'button.skip',
+    '.skip-btn',
+    '.ad-skip-btn',
+  ];
+
+  for (const sel of skipSelectors) {
+    const btn = document.querySelector(sel);
+    if (btn && btn.offsetParent !== null && !btn.closest('#together-overlay-root')) {
+      log('Auto-clicking Ad Skip button:', btn);
+      btn.click();
+      return true;
+    }
+  }
+
+  // Check buttons/clickable elements with "Skip" text
+  const allClickables = Array.from(document.querySelectorAll('button, div[role="button"], a, span[role="button"]'));
+  for (const el of allClickables) {
+    if (el.closest('#together-overlay-root') || el.offsetParent === null) continue;
+    const txt = el.textContent.trim().toLowerCase();
+    if (txt === 'skip ad' || txt === 'skip' || txt === 'skip advertisement' || txt.startsWith('skip ad') || txt === 'close ad') {
+      log('Auto-clicking Ad text button:', el);
+      el.click();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function startAdDetection() {
   function checkAdState() {
-    // Only detect ads if an explicit ad overlay element exists on Hotstar
-    const adOverlay = !!document.querySelector('.ad-container, [data-testid*="ad-container"], .ad-badge, .ad-timer, [class*="AdOverlay"]');
-    const nowInAd = adOverlay;
+    if (!isInRoom || !chrome.runtime?.id) return;
+
+    const nowInAd = isAdOverlayPresent();
+
+    if (nowInAd) {
+      // While in ad, attempt to skip / close the ad as soon as time runs out
+      trySkipOrDismissAd();
+    }
 
     if (nowInAd !== isInAdBreak) {
       isInAdBreak = nowInAd;
       log(isInAdBreak ? '🎬 Ad break started — sync paused' : '✅ Ad break ended — sync resumed');
 
-      if (!isInAdBreak && isHost && videoEl) {
-        // Resuming after ad — broadcast current state to re-sync guest
-        setTimeout(() => {
-          sendWS({
-            type: 'sync',
-            action: videoEl.paused ? 'pause' : 'play',
-            currentTime: videoEl.currentTime,
-            sentAt: Date.now(),
-          });
-        }, 1000);
+      if (!isInAdBreak) {
+        if (isHost && videoEl) {
+          // Host resumes: broadcast state to guest
+          setTimeout(() => {
+            sendWS({
+              type: 'sync',
+              action: videoEl.paused ? 'pause' : 'play',
+              currentTime: videoEl.currentTime,
+              sentAt: Date.now(),
+            });
+          }, 800);
+        } else if (!isHost) {
+          // Guest finishes ad: request current host state to jump straight to the movie
+          setTimeout(() => {
+            sendWS({ type: 'state-request' });
+            if (videoEl && videoEl.paused && syncEnabled) {
+              videoEl.play().catch(() => {});
+            }
+          }, 300);
+        }
       }
     }
   }
 
-  if (adObserver) adObserver.disconnect();
-  // Watch for class changes on body subtree
-  adObserver = new MutationObserver(checkAdState);
-  adObserver.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class', 'data-testid'] });
+  if (adObserver) {
+    adObserver.disconnect();
+    adObserver = null;
+  }
+
+  let checkScheduled = false;
+  adObserver = new MutationObserver(() => {
+    if (!checkScheduled) {
+      checkScheduled = true;
+      requestAnimationFrame(() => {
+        checkScheduled = false;
+        checkAdState();
+      });
+    }
+  });
+
+  if (document.body) {
+    adObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  if (adCheckInterval) clearInterval(adCheckInterval);
+  adCheckInterval = setInterval(checkAdState, 350);
+
   checkAdState();
 }
 
@@ -1134,6 +1256,10 @@ function stopAdDetection() {
   if (adObserver) {
     adObserver.disconnect();
     adObserver = null;
+  }
+  if (adCheckInterval) {
+    clearInterval(adCheckInterval);
+    adCheckInterval = null;
   }
   isInAdBreak = false;
 }
