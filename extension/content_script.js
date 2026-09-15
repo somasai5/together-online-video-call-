@@ -193,6 +193,20 @@ function buildOverlayHTML() {
         </div>
       </div>
 
+      <!-- ── Now Watching Movie Card ── -->
+      <div id="tog-drawer-movie-card">
+        <div class="tog-drawer-movie-header">
+          <span class="tog-movie-badge">NOW WATCHING</span>
+          <span id="tog-drawer-movie-status-icon">🎬</span>
+        </div>
+        <div id="tog-drawer-movie-title" class="tog-drawer-movie-title">
+          ${isHost ? escapeHTML(getMovieTitle(window.location.href)) : 'Waiting for host…'}
+        </div>
+        <button id="tog-drawer-switch-btn" class="tog-drawer-switch-btn hidden">
+          🎬 Switch to Host's Movie
+        </button>
+      </div>
+
       <!-- ── Live Video Call Section ── -->
       <div id="tog-drawer-video-card">
         <div id="tog-webcam-section">
@@ -351,13 +365,15 @@ function attachOverlayListeners() {
     }
   });
 
-  // Movie switch banner buttons
-  document.getElementById('tog-switch-movie-btn')?.addEventListener('click', () => {
+  // Movie switch banner & drawer buttons
+  const onSwitchMovie = () => {
     if (pendingMovieUrl) {
       log('Switching to host movie:', pendingMovieUrl);
       window.location.href = pendingMovieUrl;
     }
-  });
+  };
+  document.getElementById('tog-switch-movie-btn')?.addEventListener('click', onSwitchMovie);
+  document.getElementById('tog-drawer-switch-btn')?.addEventListener('click', onSwitchMovie);
   document.getElementById('tog-dismiss-movie-btn')?.addEventListener('click', () => {
     document.getElementById('tog-movie-banner')?.classList.add('hidden');
   });
@@ -447,50 +463,72 @@ function attachOverlayListeners() {
 
 // ─── Movie / URL sync helpers ────────────────────────────────────────────────
 
-// ─── Movie / URL sync helpers ────────────────────────────────────────────────
-
-let lastKnownHostUrl = null;
+let lastKnownHostUrl   = null;
 let lastKnownHostTitle = null;
+let lastTrackedUrl     = window.location.href;
+let movieSyncInterval  = null;
 
-function getTitleFromUrl(u) {
+function getMovieTitle(targetUrl = window.location.href) {
   try {
-    const parsed = new URL(u, window.location.origin);
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    const idx = segments.findIndex((s) => s === 'movies' || s === 'shows' || s === 'clips');
-    if (idx !== -1 && segments[idx + 1]) {
-      return segments[idx + 1].replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const parsed = new URL(targetUrl, window.location.origin);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    const segments = path.split('/').filter(Boolean);
+
+    // Scan for category keywords in path: movies, shows, clips, tv, sports, series
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i].toLowerCase();
+      if (['movies', 'shows', 'clips', 'tv', 'sports', 'series', 'watch'].includes(seg)) {
+        for (let j = i + 1; j < segments.length; j++) {
+          const nextSeg = segments[j];
+          if (nextSeg && !/^\d+$/.test(nextSeg) && nextSeg !== 'watch') {
+            return nextSeg
+              .replace(/[-_]+/g, ' ')
+              .split(' ')
+              .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join(' ');
+          }
+        }
+      }
     }
   } catch {}
-  return null;
-}
 
-function getMovieTitle() {
-  const titleSelectors = [
-    '[data-testid="player-title"]',
-    '[data-testid*="title"]',
-    'h1',
-    'h2',
-    '.player-title',
-    '.tray-title',
-    '.movie-title',
-    '.watch-title',
-  ];
-  for (const sel of titleSelectors) {
-    const el = document.querySelector(sel);
-    if (el && el.textContent.trim()) {
-      const text = el.textContent.trim();
-      if (text.length > 1 && text.length < 80) return text;
+  // If on active page, check DOM headings
+  if (targetUrl === window.location.href) {
+    const titleSelectors = [
+      '[data-testid="player-title"]',
+      '[data-testid*="title"]',
+      'h1',
+      'h2',
+      '.player-title',
+      '.tray-title',
+      '.movie-title',
+      '.watch-title',
+    ];
+    for (const sel of titleSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.textContent.trim()) {
+        const text = el.textContent.trim();
+        if (text.length > 1 && text.length < 80 && !/Disney\+|Hotstar|Upgrade|Home|Search/i.test(text)) {
+          return text;
+        }
+      }
+    }
+
+    const docTitle = document.title
+      .replace(/\s*[-|•–]\s*(Disney\+?\s*)?Hotstar.*$/i, '')
+      .replace(/^Watch\s+/i, '')
+      .trim();
+
+    if (docTitle && docTitle.length > 1 && !/Disney\+|Hotstar|Home/i.test(docTitle)) {
+      return docTitle;
     }
   }
 
-  const docTitle = document.title
-    .replace(/\s*[-|•–]\s*(Disney\+?\s*)?Hotstar.*$/i, '')
-    .replace(/^Watch\s+/i, '')
-    .trim();
+  if (targetUrl.includes('/in/home') || targetUrl.endsWith('/home') || targetUrl === 'https://www.hotstar.com/' || targetUrl === 'https://hotstar.com/') {
+    return 'Hotstar Home';
+  }
 
-  if (docTitle && docTitle.length > 1) return docTitle;
-
-  return getTitleFromUrl(window.location.href) || 'this movie';
+  return 'Hotstar Video';
 }
 
 function normalizeUrl(u) {
@@ -515,20 +553,69 @@ function escapeHTML(str) {
   }[tag] || tag));
 }
 
+function updateDrawerMovieCard(url, title, isHostRole) {
+  const titleEl = document.getElementById('tog-drawer-movie-title');
+  const switchBtn = document.getElementById('tog-drawer-switch-btn');
+  const banner = document.getElementById('tog-movie-banner');
+  const bannerText = document.getElementById('tog-movie-text');
+
+  if (!titleEl) return;
+
+  if (isHostRole) {
+    titleEl.innerHTML = `<strong>Watching:</strong> ${escapeHTML(title || 'Hotstar')}`;
+    if (switchBtn) switchBtn.classList.add('hidden');
+    if (banner) banner.classList.add('hidden');
+    return;
+  }
+
+  // Guest role
+  if (!lastKnownHostUrl) {
+    titleEl.innerHTML = `<em>Waiting for host to pick a movie…</em>`;
+    if (switchBtn) switchBtn.classList.add('hidden');
+    if (banner) banner.classList.add('hidden');
+    return;
+  }
+
+  const currentNorm = normalizeUrl(window.location.href);
+  const targetNorm  = normalizeUrl(lastKnownHostUrl);
+  const hostTitle   = lastKnownHostTitle || getMovieTitle(lastKnownHostUrl) || "Host's Movie";
+
+  if (currentNorm !== targetNorm) {
+    pendingMovieUrl = lastKnownHostUrl;
+    titleEl.innerHTML = `<span style="color:#f59e0b">Host is on:</span> <strong>${escapeHTML(hostTitle)}</strong>`;
+    if (switchBtn) {
+      switchBtn.textContent = `🎬 Switch to ${hostTitle}`;
+      switchBtn.classList.remove('hidden');
+    }
+    if (bannerText) {
+      bannerText.innerHTML = `🎬 Host is watching: <strong>${escapeHTML(hostTitle)}</strong>`;
+    }
+    if (banner) {
+      banner.classList.remove('hidden');
+    }
+  } else {
+    pendingMovieUrl = null;
+    titleEl.innerHTML = `<span style="color:#10b981">✓ Watching with Host:</span> <strong>${escapeHTML(hostTitle)}</strong>`;
+    if (switchBtn) switchBtn.classList.add('hidden');
+    if (banner) banner.classList.add('hidden');
+  }
+}
+
 function broadcastMovieUrlIfNeeded(force = false) {
   if (!isHost || !isInRoom) return;
   const currentUrl = window.location.href;
+  const title = getMovieTitle(currentUrl);
   if (force || currentUrl !== lastBroadcastUrl) {
     lastBroadcastUrl = currentUrl;
-    const title = getMovieTitle();
     sendWS({
       type: 'movie-change',
       url: currentUrl,
       title: title,
       sentAt: Date.now(),
     });
-    log('Broadcasted movie URL to guest:', currentUrl, title);
+    log('Host broadcasted movie URL:', currentUrl, title);
   }
+  updateDrawerMovieCard(currentUrl, title, true);
 }
 
 function handleIncomingMovieUrl(targetUrl, targetTitle) {
@@ -545,58 +632,40 @@ function handleIncomingMovieUrl(targetUrl, targetTitle) {
 }
 
 function checkMovieUrlMatch() {
-  if (isHost || !lastKnownHostUrl || !isInRoom) return;
-
+  if (isHost || !isInRoom) return;
   if (!overlayRoot) {
     injectOverlay();
   }
+  updateDrawerMovieCard(lastKnownHostUrl, lastKnownHostTitle, false);
+}
 
-  const currentNorm = normalizeUrl(window.location.href);
-  const targetNorm  = normalizeUrl(lastKnownHostUrl);
+function startMovieSyncMonitor() {
+  if (movieSyncInterval) clearInterval(movieSyncInterval);
+  movieSyncInterval = setInterval(() => {
+    if (!isInRoom || !chrome.runtime?.id) return;
 
-  const banner = document.getElementById('tog-movie-banner');
-  const textEl = document.getElementById('tog-movie-text');
+    const currentUrl = window.location.href;
+    if (currentUrl !== lastTrackedUrl) {
+      lastTrackedUrl = currentUrl;
+      log('SPA Navigation detected:', currentUrl);
+      if (isHost) {
+        broadcastMovieUrlIfNeeded(true);
+      } else {
+        checkMovieUrlMatch();
+      }
+    }
 
-  if (currentNorm !== targetNorm) {
-    pendingMovieUrl = lastKnownHostUrl;
-    const title = lastKnownHostTitle || getTitleFromUrl(lastKnownHostUrl) || 'Host\'s movie';
-    if (textEl) {
-      textEl.innerHTML = `🎬 Host is watching: <strong>${escapeHTML(title)}</strong>`;
+    if (isHost) {
+      broadcastMovieUrlIfNeeded(false);
+    } else {
+      checkMovieUrlMatch();
     }
-    if (banner) {
-      banner.classList.remove('hidden');
-    }
-    log('Host is on different movie. Guest:', currentNorm, 'Host:', targetNorm);
-  } else {
-    // Both on same movie!
-    if (banner) {
-      banner.classList.add('hidden');
-    }
-    pendingMovieUrl = null;
-  }
+  }, 400);
 }
 
 function hookSpaNavigation() {
   if (window._togSpaHooked) return;
   window._togSpaHooked = true;
-
-  const origPushState = history.pushState;
-  if (typeof origPushState === 'function') {
-    history.pushState = function (...args) {
-      const res = origPushState.apply(this, args);
-      setTimeout(onUrlOrNavChange, 50);
-      return res;
-    };
-  }
-
-  const origReplaceState = history.replaceState;
-  if (typeof origReplaceState === 'function') {
-    history.replaceState = function (...args) {
-      const res = origReplaceState.apply(this, args);
-      setTimeout(onUrlOrNavChange, 50);
-      return res;
-    };
-  }
 
   window.addEventListener('popstate', onUrlOrNavChange);
   window.addEventListener('hashchange', onUrlOrNavChange);
@@ -1338,12 +1407,17 @@ chrome.runtime.onMessage.addListener((message) => {
 
       startVideoObserver();
       startAdDetection();
+      startMovieSyncMonitor();
 
       if (isHost) {
         startDriftHeartbeat();
+        broadcastMovieUrlIfNeeded(true);
         appendChatMessage('Room created. Share the code!', 'system');
       } else {
         startClockSync();
+        if (message.movieUrl) {
+          handleIncomingMovieUrl(message.movieUrl, message.movieTitle);
+        }
         sendWS({ type: 'state-request' });
         appendChatMessage('Joined room! Ready to watch together.', 'system');
       }
@@ -1360,6 +1434,7 @@ chrome.runtime.onMessage.addListener((message) => {
         clockSyncInterval = null;
       }
       startDriftHeartbeat();
+      broadcastMovieUrlIfNeeded(true);
       appendChatMessage('You are now the host.', 'system');
       break;
 
@@ -1372,6 +1447,9 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case 'peer-reconnected':
       appendChatMessage('Friend reconnected.', 'system');
+      if (isHost) {
+        broadcastMovieUrlIfNeeded(true);
+      }
       break;
 
     case 'peer-disconnected':
@@ -1385,6 +1463,10 @@ chrome.runtime.onMessage.addListener((message) => {
       isHost = false;
       stopDriftHeartbeat();
       stopAdDetection();
+      if (movieSyncInterval) {
+        clearInterval(movieSyncInterval);
+        movieSyncInterval = null;
+      }
       if (clockSyncInterval) {
         clearInterval(clockSyncInterval);
         clockSyncInterval = null;
@@ -1622,10 +1704,11 @@ function initRoom(data) {
 
   startVideoObserver();
   startAdDetection();
+  startMovieSyncMonitor();
 
   if (isHost) {
     startDriftHeartbeat();
-    broadcastMovieUrlIfNeeded();
+    broadcastMovieUrlIfNeeded(true);
   } else {
     startClockSync();
     if (data.movieUrl) {

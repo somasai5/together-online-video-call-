@@ -185,6 +185,20 @@ chrome.runtime.onInstalled.addListener(() => {
   resetRoomStorage();
 });
 
+// ─── Listen for Tab Navigation on Hotstar ────────────────────────────────────
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' || changeInfo.url) {
+    const url = changeInfo.url || tab.url;
+    if (url && (url.includes('hotstar.com') || url.includes('jiohotstar.com'))) {
+      chrome.storage.session.get(['roomCode', 'participantId', 'isHost', 'movieUrl', 'movieTitle'], (data) => {
+        if (data && data.roomCode) {
+          chrome.tabs.sendMessage(tabId, { ...data, type: 'room-state', source: 'background' }).catch(() => {});
+        }
+      });
+    }
+  }
+});
+
 // ─── Alarms keepalive (belt-and-suspenders) ───────────────────────────────────
 // Even though the offscreen document holds the WebSocket, keep an alarm
 // so the service worker wakes up periodically and can re-create the offscreen

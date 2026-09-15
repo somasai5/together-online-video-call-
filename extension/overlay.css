@@ -660,6 +660,73 @@
   letter-spacing: 0.05em;
 }
 
+/* ── Now Watching Drawer Card ────────────────────────────────────────────── */
+#tog-drawer-movie-card {
+  padding: 12px 16px;
+  background: rgba(20, 16, 42, 0.95);
+  border-bottom: 1px solid var(--tog-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tog-drawer-movie-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tog-movie-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--tog-accent-light);
+  text-transform: uppercase;
+}
+
+.tog-drawer-movie-title {
+  font-size: 13px;
+  color: var(--tog-text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.tog-drawer-movie-title strong {
+  color: #fff;
+  font-weight: 700;
+}
+
+.tog-drawer-switch-btn {
+  background: linear-gradient(135deg, var(--tog-green) 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--tog-radius-sm);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px var(--tog-green-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: transform var(--tog-transition), box-shadow var(--tog-transition);
+  animation: tog-pulse-glow 1.5s infinite alternate;
+}
+
+@keyframes tog-pulse-glow {
+  0% { box-shadow: 0 2px 8px var(--tog-green-glow); transform: scale(1); }
+  100% { box-shadow: 0 4px 18px rgba(16, 185, 129, 0.7); transform: scale(1.02); }
+}
+
+.tog-drawer-switch-btn:hover {
+  transform: scale(1.04);
+}
+
+.tog-drawer-switch-btn.hidden {
+  display: none !important;
+}
+
 .tog-call-quick-btn {
   background: var(--tog-accent);
   color: #fff;
