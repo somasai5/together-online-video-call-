@@ -1862,27 +1862,68 @@ function showRemoteStream(stream) {
   // Route incoming audio to dedicated high-priority audio pipeline
   ensureRemoteAudio(stream);
 
-  if (stream && stream.getTracks().length > 0) {
-    if (video.srcObject !== stream) {
-      video.srcObject = stream;
-    }
-    const hasVideo = stream.getVideoTracks().length > 0 && stream.getVideoTracks().some((t) => t.readyState === 'live');
-    if (placeholder) placeholder.style.display = hasVideo ? 'none' : '';
-    video.style.display = hasVideo ? 'block' : 'none';
-
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true; // Video element is muted so audio doesn't double with remoteAudioEl
-
-    const p = video.play();
-    if (p && typeof p.catch === 'function') {
-      p.catch(() => {});
-    }
-  } else {
+  if (!stream || stream.getTracks().length === 0) {
     video.srcObject = null;
     if (placeholder) placeholder.style.display = '';
     video.style.display = 'none';
+    return;
   }
+
+  if (video.srcObject !== stream) {
+    video.srcObject = stream;
+  }
+
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = true; // Video element is muted so audio doesn't double with remoteAudioEl
+
+  const checkVideoTrack = () => {
+    const vTracks = stream.getVideoTracks();
+    const hasLiveVideo = vTracks.length > 0 && vTracks.some((t) => t.enabled && t.readyState === 'live');
+    if (placeholder) placeholder.style.display = hasLiveVideo ? 'none' : '';
+    video.style.display = hasLiveVideo ? 'block' : 'none';
+    if (hasLiveVideo) {
+      video.play().catch(() => {});
+    }
+  };
+
+  checkVideoTrack();
+
+  stream.onaddtrack = checkVideoTrack;
+  stream.onremovetrack = checkVideoTrack;
+  stream.getVideoTracks().forEach((track) => {
+    track.onunmute = () => {
+      log('Remote video track onunmute fired');
+      checkVideoTrack();
+    };
+    track.onmute = () => {
+      log('Remote video track onmute fired');
+      checkVideoTrack();
+    };
+    track.onended = checkVideoTrack;
+  });
+
+  video.onloadedmetadata = () => {
+    log('Remote video loadedmetadata:', video.videoWidth, 'x', video.videoHeight);
+    checkVideoTrack();
+  };
+  video.oncanplay = () => {
+    video.play().catch(() => {});
+  };
+}
+
+// Global click listener to unlock any blocked audio/video elements due to browser autoplay policies
+if (!window._togAutoplayUnlockHooked) {
+  window._togAutoplayUnlockHooked = true;
+  document.addEventListener('click', () => {
+    if (remoteAudioEl && remoteAudioEl.srcObject && remoteAudioEl.paused) {
+      remoteAudioEl.play().catch(() => {});
+    }
+    const rVideo = document.getElementById('tog-remote-video');
+    if (rVideo && rVideo.srcObject && rVideo.paused) {
+      rVideo.play().catch(() => {});
+    }
+  }, { capture: true });
 }
 
 // ─── Mute / cam toggles ───────────────────────────────────────────────────────

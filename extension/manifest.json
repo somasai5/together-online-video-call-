@@ -57,7 +57,10 @@
     "*://*.disneyplus.hotstar.com/*",
     "*://disneyplus.hotstar.com/*",
     "*://*.jiohotstar.com/*",
-    "*://jiohotstar.com/*"
+    "*://jiohotstar.com/*",
+    "https://*.onrender.com/*",
+    "wss://*.onrender.com/*",
+    "https://*.metered.ca/*"
   ],
 
   "web_accessible_resources": [
