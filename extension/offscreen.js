@@ -102,6 +102,10 @@ function sendToServer(payload) {
   } else {
     // Queue it — will flush on reconnect
     sendQueue.push(payload);
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      isIntentionalClose = false;
+      connect();
+    }
   }
 }
 
@@ -130,6 +134,9 @@ chrome.runtime.onMessage.addListener((message) => {
       break;
     case 'ws-disconnect':
       disconnect();
+      break;
+    case 'ws-leave':
+      sendToServer({ type: 'leave' });
       break;
     case 'ws-send':
       sendToServer(message.payload);

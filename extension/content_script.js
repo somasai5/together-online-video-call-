@@ -706,6 +706,19 @@ chrome.runtime.onMessage.addListener((message) => {
       appendChatMessage('Friend disconnected.', 'system');
       break;
 
+    case 'left-room':
+      isInRoom = false;
+      roomCode = null;
+      participantId = null;
+      isHost = false;
+      if (overlayRoot) {
+        overlayRoot.remove();
+        overlayRoot = null;
+      }
+      endCall(false);
+      log('Left room');
+      break;
+
     // ── Server asks us to send state snapshot (for reconnected guest) ──────
     case 'send-state-snapshot':
       if (isHost && videoEl) {

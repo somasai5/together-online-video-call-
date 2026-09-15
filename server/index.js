@@ -223,6 +223,43 @@ function handleMessage(ws, rawData, participantId) {
   log('warn', `[MSG] Unknown event type "${type}" from ${participantId}, dropping`);
 }
 
+function handleLeave(ws, participantId) {
+  if (!participantId) return;
+
+  let room = null;
+  for (const r of rooms.values()) {
+    if (r.participants.has(participantId)) {
+      room = r;
+      break;
+    }
+  }
+  if (!room) return;
+
+  log('info', `[LEAVE] Participant ${participantId} explicitly left room ${room.code}`);
+
+  const participant = room.participants.get(participantId);
+  if (participant && participant.graceTimer) {
+    clearTimeout(participant.graceTimer);
+  }
+  room.participants.delete(participantId);
+
+  const peer = getPeer(room, participantId);
+  if (peer && peer.ws) {
+    send(peer.ws, { type: 'peer-disconnected', participantId });
+    if (room.hostId === participantId) {
+      room.hostId = peer.id;
+      send(peer.ws, { type: 'you-are-host' });
+      log('info', `[HOST-HANDOFF] Host left room ${room.code}, new host is ${peer.id}`);
+    }
+  }
+
+  if (room.participants.size === 0) {
+    scheduleRoomCleanup(room);
+  }
+
+  send(ws, { type: 'left-room' });
+}
+
 // ─── Connection handler ───────────────────────────────────────────────────────
 
 function handleConnection(ws, req) {
@@ -237,15 +274,28 @@ function handleConnection(ws, req) {
 
   ws.on('message', (rawData) => {
     try {
+      let msg;
+      try {
+        msg = JSON.parse(rawData.toString());
+      } catch {
+        send(ws, { type: 'error', message: 'Invalid JSON' });
+        return;
+      }
+
+      // Ping keepalive
+      if (msg.type === 'ping') return;
+
+      // Explicit leave: clears room slot and resets participantId so socket can create/join again
+      if (msg.type === 'leave') {
+        if (participantId) {
+          handleLeave(ws, participantId);
+          participantId = null;
+        }
+        return;
+      }
+
       // ── Pre-join: only accept join / create ─────────────────────────────
       if (!participantId) {
-        let msg;
-        try {
-          msg = JSON.parse(rawData.toString());
-        } catch {
-          send(ws, { type: 'error', message: 'Invalid JSON' });
-          return;
-        }
 
         if (msg.type === 'create') {
           const code = generateRoomCode();

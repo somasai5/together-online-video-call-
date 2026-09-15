@@ -71,6 +71,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.local.set(roomState).catch(() => {});
     }
 
+    if (type === 'left-room') {
+      chrome.storage.session.clear().catch(() => {});
+      chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected']).catch(() => {});
+    }
+
     // Broadcast to all Hotstar content script tabs
     chrome.tabs.query({ url: ['*://*.hotstar.com/*', '*://*.disneyplus.hotstar.com/*', '*://*.jiohotstar.com/*'] }, (tabs) => {
       for (const tab of tabs) {

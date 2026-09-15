@@ -129,7 +129,7 @@ btnCopy.addEventListener('click', () => {
 });
 
 btnLeave.addEventListener('click', () => {
-  sendToBackground({ type: 'ws-disconnect' });
+  sendToBackground({ type: 'ws-leave' });
   chrome.storage.session.clear();
   chrome.storage.local.remove(['roomCode', 'participantId', 'isHost', 'peerConnected']);
   currentRoomCode = null;
@@ -140,7 +140,7 @@ btnLeave.addEventListener('click', () => {
   btnJoin.disabled   = false;
   inputCode.value    = '';
   showScreen('lobby');
-  setStatus('disconnected', 'Not connected');
+  setStatus('connected', 'Connected');
 });
 
 // ─── Incoming messages from background ────────────────────────────────────────
