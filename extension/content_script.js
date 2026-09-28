@@ -26,14 +26,11 @@ const ICE_SERVERS = [
   { urls: 'stun:openrelay.metered.ca:80' },
   {
     urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:443',
-      'turn:openrelay.metered.ca:443?transport=tcp',
-      'turns:openrelay.metered.ca:443?transport=tcp',
-      'turns:openrelay.metered.ca:5349?transport=tcp',
+      'turn:92.4.80.166:3478',
+      'turn:92.4.80.166:3478?transport=tcp',
     ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
+    username: 'together',
+    credential: 'together123',
   },
 ];
 

@@ -57,13 +57,19 @@
     "*://*.disneyplus.hotstar.com/*",
     "*://disneyplus.hotstar.com/*",
     "*://*.jiohotstar.com/*",
-    "*://jiohotstar.com/*"
+    "*://jiohotstar.com/*",
+    "https://*.onrender.com/*",
+    "wss://*.onrender.com/*",
+    "http://92.4.80.166/*",
+    "ws://92.4.80.166/*"
   ],
 
   "web_accessible_resources": [
     {
       "resources": [
         "overlay.css",
+        "webrtc_bridge.html",
+        "webrtc_bridge.js",
         "icons/*.png"
       ],
       "matches": [

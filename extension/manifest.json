@@ -60,7 +60,8 @@
     "*://jiohotstar.com/*",
     "https://*.onrender.com/*",
     "wss://*.onrender.com/*",
-    "https://*.metered.ca/*"
+    "http://92.4.80.166/*",
+    "ws://92.4.80.166/*"
   ],
 
   "web_accessible_resources": [
